@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Red Planet Rush</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Left side: changing viewport (TRAVEL / SHIP / CREW / LOG) -->
+    <main id="viewport" aria-label="Viewport">
+      <!-- Canvas lives here for TRAVEL mode; other modes render DOM panels -->
+      <div id="viewport-panel" class="panel">
+        <div id="viewport-header" class="panel-header">
+          <div class="header-left">
+            <div>Location: <span id="ui-location">Earth</span></div>
+            <div>Type: <span id="ui-type">Unknown</span></div>
+            <div>Speed: <span id="ui-speed">Unknown</span></div>
+          </div>
+          <div class="header-center">
+            <div>Resources: <span id="ui-resources">UNKNOWN</span></div>
+            <div>Inhabited: <span id="ui-inhabited">UNKNOWN</span></div>
+            <div id="ui-landing-risk-row" style="display: none; visibility: hidden;">Landing Risk: <span id="ui-landing-risk">UNKNOWN</span></div>
+            <div id="ui-docking-risk-row" style="display: none; visibility: hidden;">Docking Risk: <span id="ui-docking-risk">UNKNOWN</span></div>
+          </div>
+          <div class="header-right">
+            <div>Day of Travel: <span id="ui-day">001</span>/<span id="ui-deadline">300</span></div>
+            <div>Credits: <span id="ui-credits">0</span></div>
+          </div>
+        </div>
+
+        <div id="viewport-content" class="panel-body">
+          <canvas id="map-canvas" width="1200" height="800" aria-label="Map"></canvas>
+          <!-- Scene container for location scenes (DOM overlay system) -->
+          <div id="scene-container" class="scene-container" hidden>
+            <img id="scene-image" class="scene-image" alt="Scene background" />
+            <div id="scene-hotspots" class="scene-hotspots"></div>
+            <!-- Overlay layer for merchant UIs (trader, general store) - never cleared by scene system -->
+            <div id="scene-overlay-layer" class="scene-overlay-layer" hidden></div>
+          </div>
+          <!-- Event overlay for event illustrations -->
+          <div id="event-overlay" class="event-overlay" hidden>
+            <div class="event-overlay-placeholder">IMAGE_PLACEHOLDER</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Modal / interruption layer -->
+      <div id="modal-layer" hidden aria-live="polite" aria-label="Modal"></div>
+    </main>
+
+    <!-- Right side: persistent control hub (stats + core actions) -->
+    <aside id="control-hub" aria-label="Control Hub">
+      <section id="hub-nav" aria-label="Tabs">
+        <button type="button" class="nav-btn is-active" data-tab="TRAVEL">TRAVEL</button>
+        <button type="button" class="nav-btn" data-tab="SHIP">SHIP</button>
+        <button type="button" class="nav-btn" data-tab="CREW">CREW</button>
+        <button type="button" class="nav-btn" data-tab="INVENTORY">INVENTORY</button>
+
+        <div class="nav-row">
+          <button type="button" class="nav-btn" data-tab="LOG">LOG</button>
+          <button type="button" class="nav-btn" data-tab="SETTINGS">SETTINGS</button>
+        </div>
+      </section>
+
+      <section id="hub-stats" aria-label="Stats">
+        <div class="stat-block">
+          <div class="stat-top">
+            <div class="stat-title">LIFE SUPPORT</div>
+            <div class="stat-pct"><span id="stat-life-support-pct">40</span> days</div>
+          </div>
+          <div class="stat-bar" id="stat-life-support-bar" aria-label="Life Support Bar"></div>
+        </div>
+
+        <div class="stat-block">
+          <div class="stat-top">
+            <div class="stat-title">SHIP INTEGRITY</div>
+            <div class="stat-pct"><span id="stat-hull-pct">100</span>%</div>
+          </div>
+          <div class="stat-bar" id="stat-hull-bar" aria-label="Ship Integrity Bar"></div>
+        </div>
+      </section>
+
+      <section id="hub-image" aria-label="Preview">
+        <div id="preview-frame" class="preview-frame">
+          <div class="preview-placeholder">PREVIEW</div>
+        </div>
+      </section>
+
+      <section id="hub-actions" aria-label="Actions">
+        <button type="button" id="action-travel" class="action-btn is-primary">TRAVEL</button>
+        <button type="button" id="action-wait" class="action-btn">WAIT</button>
+        <button type="button" id="action-scan" class="action-btn">SCAN</button>
+      </section>
+    </aside>
+  </div>
+
+  <script src="main.js" defer></script>
+</body>
+</html>

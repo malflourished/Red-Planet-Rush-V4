@@ -1,0 +1,1095 @@
+/*
+Red Planet Rush – UI Scaffold (Oregon Trail II-ish)
+Goal: match the mock layout + hierarchy (structure first, minimal polish).
+*/
+
+* { box-sizing: border-box; }
+
+:root {
+  --panel-black: #050505;
+  --ink: #111;
+  --paper: #ffffff;
+  --stroke: #111;
+  --mars-red: #850D1D;
+  --ship-blue: #115FD1;
+  --ship-green: #0AA816;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: #ffffff; /* white background */
+  color: #fff;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+#app {
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 24px;
+  padding: 24px;
+  height: 100vh;
+  overflow: hidden; /* Prevent app from extending beyond viewport */
+  box-sizing: border-box; /* Include padding in height calculation */
+}
+
+/* =============================
+   LEFT: VIEWPORT
+   ============================= */
+
+#viewport {
+  display: flex;
+  align-items: stretch;
+  min-height: 0; /* Important for flex containers to respect parent bounds */
+  overflow: hidden; /* Prevent viewport from extending beyond bounds */
+  position: relative; /* Allow absolute positioning of modal layer */
+}
+
+.panel {
+  width: 100%;
+  height: 100%;
+  background: var(--panel-black);
+  border: 2px solid var(--paper);
+  border-radius: 18px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px; /* Reduced gap to bring terminal closer to map */
+  min-height: 0; /* Important for flex containers to respect parent bounds */
+  overflow: hidden; /* Prevent content from extending beyond panel */
+  box-sizing: border-box; /* Include padding in height calculation */
+}
+
+.panel-header {
+  border: 2px solid var(--paper);
+  border-radius: 12px;
+  padding: 10px 14px 10px 14px; /* top right bottom left - bottom matches top */
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  font-weight: 700;
+  color: var(--paper);
+  box-sizing: border-box;
+}
+
+/* Ensure header columns align properly for visual balance */
+.panel-header .header-left,
+.panel-header .header-center,
+.panel-header .header-right {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+.panel-header .header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.panel-header .header-center {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  margin-left: 2rem;
+  margin-right: 2rem;
+}
+
+.panel-header .header-right {
+  font-size: 14px;
+}
+
+.panel-body {
+  flex: 1;
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  position: relative;
+  min-height: 0; /* Important for flex children to respect container bounds */
+  max-height: 100%; /* Prevent extending beyond parent */
+}
+
+#map-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain; /* Ensure canvas doesn't exceed container */
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+#map-canvas[hidden] {
+  display: none !important;
+  z-index: -1;
+}
+
+/* Scene system */
+.scene-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+}
+
+.scene-container[hidden] {
+  display: none !important;
+}
+
+.scene-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background-color: #1a1a1a;
+}
+
+.scene-hotspots {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.scene-overlay-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 15; /* Above scene-image, below scene-hotspots */
+  pointer-events: auto; /* Allow interaction with merchant UI */
+}
+
+.scene-overlay-layer[hidden] {
+  display: none !important;
+}
+
+.scene-hotspot {
+  pointer-events: all;
+  background: var(--ink);
+  color: var(--paper);
+  border: 2px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 10px;
+  font-weight: 900;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  transition: background 0.1s;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  z-index: 30;
+}
+
+.scene-hotspot:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.scene-title {
+  position: absolute;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--paper);
+  font-size: 18px;
+  font-weight: 900;
+  text-align: center;
+  z-index: 25;
+  pointer-events: none;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.map-zoom-controls {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 10;
+}
+
+.zoom-btn {
+  width: 40px;
+  height: 40px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--stroke);
+  border-radius: 6px;
+  font-size: 24px;
+  font-weight: 900;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.zoom-btn:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.zoom-btn:active {
+  transform: scale(0.95);
+}
+
+/* =============================
+   RIGHT: CONTROL HUB
+   ============================= */
+
+#control-hub {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+#hub-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nav-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.nav-btn {
+  background: var(--paper);
+  color: var(--ink);
+  border: 4px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  /* remove soft shadow for crisper OT2 look */
+  box-shadow: none;
+}
+
+.nav-btn.is-active {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+#hub-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.stat-block {
+  background: var(--paper);
+  border: 4px solid var(--stroke);
+  border-radius: 6px;
+  padding: 10px;
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.stat-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-weight: 900;
+}
+
+.stat-title,
+.stat-pct {
+  font-size: 14px;
+}
+
+.stat-bar {
+  margin-top: 8px;
+  height: 18px;
+  border: 2px solid var(--stroke);
+  border-radius: 4px;
+  padding: 3px;
+  display: grid;
+  grid-template-columns: repeat(20, 1fr);
+  gap: 3px;
+  background: var(--paper);
+}
+
+.stat-bar .seg {
+  background: var(--ink);
+  border-radius: 2px;
+}
+
+.stat-bar .seg.is-low {
+  background: var(--mars-red);
+}
+
+.stat-bar .seg.is-empty {
+  background: transparent;
+  outline: 1px solid rgba(0,0,0,0.25);
+}
+
+.preview-frame {
+  background: var(--paper);
+  border: 4px solid var(--stroke);
+  border-radius: 12px;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+}
+
+.preview-placeholder {
+  color: rgba(0,0,0,0.35);
+  font-weight: 900;
+  letter-spacing: 1px;
+}
+
+#hub-actions {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 1fr;
+  gap: 12px;
+}
+
+.action-btn {
+  background: var(--paper);
+  color: var(--ink);
+  border: 4px solid var(--stroke);
+  border-radius: 6px;
+  padding: 14px 10px;
+  font-weight: 900;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+.action-btn.is-primary {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--stroke);
+}
+
+.action-btn.is-primary:hover,
+.action-btn.is-primary:active {
+  background: var(--mars-red);
+  color: var(--paper);
+  border-color: var(--mars-red);
+}
+
+.action-btn#action-wait:hover,
+.action-btn#action-wait:active {
+  background: var(--ship-blue);
+  color: var(--paper);
+  border-color: var(--ship-blue);
+}
+
+.action-btn#action-scan:hover,
+.action-btn#action-scan:active {
+  background: var(--ship-green);
+  color: var(--paper);
+  border-color: var(--ship-green);
+}
+
+/* Modal layer (kept for later) */
+#modal-layer {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+#modal-layer[hidden] {
+  display: none !important;
+  pointer-events: none;
+}
+
+/* Modal content styling */
+.modal-content {
+  background: var(--paper);
+  color: var(--ink);
+  border: 4px solid var(--stroke);
+  border-radius: 12px;
+  padding: 30px;
+  max-width: 500px;
+  text-align: center;
+  font-family: 'Inter', sans-serif;
+}
+
+.modal-content h2 {
+  margin: 0 0 20px 0;
+  color: var(--ink);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.modal-content p {
+  margin: 0 0 30px 0;
+  color: var(--ink);
+  line-height: 1.6;
+  font-size: 16px;
+}
+
+.modal-button {
+  background: var(--paper);
+  color: var(--ink);
+  border: 4px solid var(--stroke);
+  border-radius: 6px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 900;
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  transition: background 0.1s, color 0.1s;
+}
+
+.modal-button:hover {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+/* =============================
+   CREW VIEW
+   ============================= */
+
+.crew-container {
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  overflow-y: auto;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: var(--panel-black);
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+.crew-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  max-width: 100%;
+}
+
+.crew-card {
+  background: var(--panel-black);
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 200px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  /* Ready for hover states - can add :hover styles here later */
+}
+
+.crew-card:hover {
+  border-color: var(--ship-blue);
+  /* Future: add hover effects here */
+}
+
+.crew-card-empty {
+  background: transparent;
+  border: 2px solid var(--paper);
+  border-style: dashed;
+}
+
+.crew-portrait {
+  width: 100%;
+  max-width: 120px;
+  height: auto;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  filter: contrast(1.2);
+}
+
+.crew-name {
+  font-weight: 900;
+  font-size: 14px;
+  color: var(--paper);
+  text-align: center;
+}
+
+.crew-background {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--paper);
+  text-align: center;
+}
+
+.crew-status {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--paper);
+  text-align: center;
+}
+
+.crew-treatment-options {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+}
+
+.crew-treat-button {
+  background: var(--panel-black);
+  border: 1px solid var(--ship-blue);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: var(--paper);
+  font-weight: 600;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+  text-align: center;
+}
+
+.crew-treat-button:hover {
+  background: var(--ship-blue);
+  color: var(--panel-black);
+}
+
+.crew-no-supplies {
+  font-weight: 500;
+  font-size: 11px;
+  color: #888;
+  text-align: center;
+  padding: 6px 8px;
+  font-style: italic;
+}
+
+/* =============================
+   INVENTORY VIEW
+   ============================= */
+
+.inventory-container {
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  overflow-y: auto;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: var(--panel-black);
+  z-index: 10;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.inventory-credits {
+  text-align: center;
+  font-weight: 900;
+  font-size: 18px;
+  color: var(--paper);
+  padding: 12px 0;
+}
+
+.inventory-columns {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  flex: 1;
+  min-height: 0;
+}
+
+.inventory-column {
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--paper);
+  border-right: 1px solid var(--paper);
+  padding: 0 12px;
+}
+
+.inventory-column:first-child {
+  border-left: none;
+}
+
+.inventory-column:last-child {
+  border-right: none;
+}
+
+.inventory-column-header {
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--paper);
+  text-align: left;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--paper);
+  margin-bottom: 12px;
+}
+
+.inventory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.inventory-entry {
+  font-weight: 600;
+  font-size: 14px;
+  color: #ffffff;
+  text-align: center;
+  padding: 8px 12px;
+  border: 2px solid #AAAAAA;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.2s, color 0.2s;
+  user-select: none;
+}
+
+.inventory-entry:hover {
+  border-color: var(--ship-blue);
+  color: var(--paper);
+}
+
+/* =============================
+   SHIP VIEW
+   ============================= */
+
+.ship-container {
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  overflow-y: auto;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: var(--panel-black);
+  z-index: 10;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.ship-image {
+  width: 100%;
+  height: 60%;
+  background: var(--panel-black);
+  border: 2px solid var(--paper);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--paper);
+  font-size: 24px;
+  font-weight: 900;
+}
+
+.ship-subsystems {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.ship-subsystem-hotspot {
+  padding: 12px;
+  border: 2px solid var(--paper);
+  border-radius: 8px;
+  background: var(--panel-black);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.ship-subsystem-hotspot:hover {
+  border-color: var(--ship-blue);
+}
+
+.ship-subsystem-name {
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--paper);
+  margin-bottom: 8px;
+}
+
+.ship-subsystem-damage {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.ship-subsystem-flavor {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--paper);
+}
+
+.ship-upgrades {
+  margin-top: 18px;
+  padding: 12px;
+  border: 2px solid var(--paper);
+  border-radius: 8px;
+  background: var(--panel-black);
+}
+
+/* =============================
+   LOG VIEW
+   ============================= */
+
+.log-container {
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: var(--panel-black);
+  z-index: 10;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.log-title {
+  font-weight: 900;
+  font-size: 24px;
+  color: var(--paper);
+  margin-bottom: 18px;
+}
+
+.log-tabs {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.log-tab {
+  font-family: 'Inter', sans-serif;
+  font-weight: 900;
+  font-size: 18px;
+  padding: 10px 18px;
+  background: transparent;
+  color: var(--paper);
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.log-tab.is-active {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.log-entries {
+  width: 100%;
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px;
+  border: 2px solid var(--paper);
+  border-radius: 12px;
+  background: var(--panel-black);
+}
+
+.log-entry {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px dotted var(--ship-blue);
+}
+
+.log-entry:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.rumor-entries {
+  width: 100%;
+  flex: 1;
+  overflow-y: auto;
+  padding: 10px;
+  border: 2px solid var(--paper);
+  border-radius: 12px;
+  background: var(--panel-black);
+  box-sizing: border-box;
+}
+
+.rumor-card {
+  transition: background 0.1s, color 0.1s;
+  border-radius: 10px;
+  padding: 12px;
+  border: 2px solid var(--paper);
+  background: var(--ink);
+  color: var(--paper);
+  box-sizing: border-box;
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+
+.rumor-card:last-child {
+  margin-bottom: 0;
+}
+
+.rumor-card.is-active {
+  background: var(--paper);
+  color: var(--ink);
+  border: 2px solid var(--ink);
+}
+
+.rumor-card * {
+  color: inherit;
+}
+
+.rumor-card.is-completed {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.rumor-day {
+  font-weight: 900;
+  font-size: 16px;
+  margin-bottom: 8px;
+}
+
+.rumor-text {
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.rumor-empty {
+  color: var(--paper);
+  opacity: 0.5;
+  font-style: italic;
+  padding: 12px;
+}
+
+.inventory-entry-clickable {
+  /* Additional styling for clickable items if needed */
+}
+
+/* =============================
+   MERCHANT / GENERAL STORE
+   ============================= */
+
+.merchant-container {
+  background: var(--panel-black);
+  border: 2px solid var(--paper);
+  border-radius: 12px;
+  padding: 30px;
+  color: var(--paper);
+}
+
+.merchant-header {
+  font-weight: 900;
+  font-size: 24px;
+  text-align: center;
+  margin-bottom: 20px;
+  letter-spacing: 2px;
+}
+
+.merchant-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 30px;
+}
+
+.merchant-tab {
+  font-family: 'Inter', sans-serif;
+  font-weight: 900;
+  font-size: 18px;
+  padding: 12px 24px;
+  background: transparent;
+  color: var(--paper);
+  border: 2px solid var(--paper);
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+
+.merchant-tab.is-active {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.merchant-content-area {
+  width: 100%;
+  flex: 1;
+  overflow: visible;
+  min-height: 0;
+}
+
+.merchant-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-flow: row;
+  gap: 12px;
+  padding: 10px;
+  width: 100%;
+  align-items: start;
+}
+
+.buy-item-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.1s;
+  width: 100%;
+  min-width: 0;
+}
+
+.buy-item-row:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.merchant-qty-input,
+.qty-input {
+  -moz-appearance: textfield;
+}
+
+.merchant-qty-input::-webkit-outer-spin-button,
+.merchant-qty-input::-webkit-inner-spin-button,
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+@keyframes merchantLimitFlash {
+  0% {
+    background-color: rgba(255, 0, 0, 0.35);
+    border-color: #ff4444;
+  }
+  100% {
+    background-color: transparent;
+    border-color: #ffffff;
+  }
+}
+
+.buy-item-row.merchant-limit-flash {
+  animation: merchantLimitFlash 0.35s ease-in-out;
+}
+
+.qty-box {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  min-width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  color: var(--paper);
+  background: transparent;
+  cursor: text;
+  user-select: none;
+}
+
+.qty-box.is-overbudget {
+  color: #ff4444;
+  border-color: #ff4444;
+}
+
+.item-capsule {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 2px solid var(--paper);
+  border-radius: 20px;
+  font-family: 'Inter', sans-serif;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.item-capsule > span:first-child {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--paper);
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.divider {
+  width: 2px;
+  height: 20px;
+  background: var(--paper);
+  flex-shrink: 0;
+}
+
+.item-capsule > span:last-child {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--paper);
+  min-width: 50px;
+  text-align: right;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Hide number input spinner arrows */
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.qty-input {
+  -moz-appearance: textfield;
+}
+
+/* =============================
+   EVENT OVERLAY
+   ============================= */
+
+.event-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--panel-black);
+  z-index: 10; /* Above canvas, below modal */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.event-overlay[hidden] {
+  display: none !important;
+}
+
+.event-overlay-placeholder {
+  font-family: 'Inter', sans-serif;
+  font-weight: 400;
+  font-size: 24px;
+  color: var(--paper);
+  opacity: 0.5;
+}
