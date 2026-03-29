@@ -1,3 +1,8 @@
+import { initDebugFromUrl, debugLog } from "./js/debug.js";
+import { syncHullIntegrity, addShipIntegrity, setShipIntegrity } from "./js/hull.js";
+import { shouldSuppressTravelMapFallback } from "./js/travelViewMode.js";
+import { createDispatchAction } from "./js/dispatchAction.js";
+
 /*
 Red Planet Rush – Prototype
 
@@ -1754,8 +1759,8 @@ const gameState = {
   },
   stats: {
     lifeSupport: 100, // Full life support (30 days at 3.333% per day)
-    hull: 100, // Ship hull integrity (0-100, where 100 is full health)
-    shipIntegrity: 100, // Ship integrity (0-100, where 100 is full health)
+    hull: 100, // Mirror of shipIntegrity (kept in sync via js/hull.js)
+    shipIntegrity: 100, // Canonical ship integrity 0–100
     credits: 1000,
     day: 1,
     deadline: 300,
@@ -1866,7 +1871,7 @@ const gameState = {
     landingDraft: null // Current landing draft being built
   },
   ship: {
-    integrity: 100, // Ship integrity (0-100) - alias for stats.shipIntegrity, kept for clarity
+    integrity: 100, // Mirror of stats.shipIntegrity (see js/hull.js)
     subsystems: {
       STRUCTURAL: {
         damage: 0, // Damage amount (0-100)
@@ -2665,7 +2670,7 @@ function seedDevStartingInventory() {
   gameState.meta.devSeedApplied = true;
   
   // Single console message
-  console.log("DEV: Seeded starting inventory");
+  debugLog("DEV: Seeded starting inventory");
 }
 
 /**
@@ -3065,12 +3070,12 @@ function applyArtifactRiskEffect(artifactDef) {
   switch (selectedFlag) {
     case "SCANNER_GLITCH":
       gameState.travel.scannerGlitchDays = Math.max(gameState.travel.scannerGlitchDays, 2);
-      console.log(`[Artifact Risk] Scanner glitch activated for ${gameState.travel.scannerGlitchDays} days`);
+      debugLog(`[Artifact Risk] Scanner glitch activated for ${gameState.travel.scannerGlitchDays} days`);
       break;
       
     case "LIFE_SUPPORT_LEAK":
       gameState.stats.lifeSupport = Math.max(0, gameState.stats.lifeSupport - 1);
-      console.log("[Artifact Risk] Life support leak detected");
+      debugLog("[Artifact Risk] Life support leak detected");
       break;
       
     case "CREW_SICKNESS":
@@ -3080,30 +3085,29 @@ function applyArtifactRiskEffect(artifactDef) {
         const worseStatuses = ["Critical", "Dying", "Deceased", "Unconscious"];
         if (!worseStatuses.includes(randomCrew.status)) {
           randomCrew.status = "Sick";
-          console.log(`[Artifact Risk] ${randomCrew.name} became sick`);
+          debugLog(`[Artifact Risk] ${randomCrew.name} became sick`);
         }
       }
       break;
       
     case "HULL_CORROSION":
-      gameState.stats.shipIntegrity = Math.max(0, gameState.stats.shipIntegrity - 1);
-      gameState.ship.integrity = gameState.stats.shipIntegrity;
-      console.log("[Artifact Risk] Hull corrosion detected");
+      addShipIntegrity(gameState, -1);
+      debugLog("[Artifact Risk] Hull corrosion detected");
       break;
       
     case "ATTRACTS_ATTENTION":
       gameState.travel.attention += 1;
-      console.log(`[Artifact Risk] Attention increased to ${gameState.travel.attention}`);
+      debugLog(`[Artifact Risk] Attention increased to ${gameState.travel.attention}`);
       break;
       
     case "CREDITS_THEFT":
       const theftAmount = Math.floor(Math.random() * 16) + 5; // 5-20 credits
       if (gameState.stats.credits >= theftAmount) {
         gameState.stats.credits -= theftAmount;
-        console.log(`[Artifact Risk] Lost ${theftAmount} credits to theft`);
+        debugLog(`[Artifact Risk] Lost ${theftAmount} credits to theft`);
       } else if (gameState.stats.credits >= 5) {
         gameState.stats.credits = 0;
-        console.log(`[Artifact Risk] Lost all remaining credits to theft`);
+        debugLog(`[Artifact Risk] Lost all remaining credits to theft`);
       }
       // If credits < 5, ignore as per spec
       break;
@@ -3153,7 +3157,7 @@ if (typeof window !== 'undefined') {
       return;
     }
     
-    console.log("[DEBUG] Testing friendly trader on asteroid:", asteroid.id);
+    debugLog("[DEBUG] Testing friendly trader on asteroid:", asteroid.id);
     
     // Set asteroid to inhabited
     generateAsteroidTruthValues(asteroid);
@@ -3175,7 +3179,7 @@ if (typeof window !== 'undefined') {
     // Trigger landing event
     showAsteroidArrivalEvent(asteroid.id);
     
-    console.log("[DEBUG] Landing event triggered. Click 'Explore' then 'Make Contact' to test trader.");
+    debugLog("[DEBUG] Landing event triggered. Click 'Explore' then 'Make Contact' to test trader.");
   };
   
   /**
@@ -3210,7 +3214,7 @@ if (typeof window !== 'undefined') {
     gameState.travel.selectedDestinationId = null;
     render();
     
-    console.log("[DEBUG] Jumped to inhabited asteroid exterior:", asteroid.id);
+    debugLog("[DEBUG] Jumped to inhabited asteroid exterior:", asteroid.id);
   };
   
   /**
@@ -3226,7 +3230,7 @@ if (typeof window !== 'undefined') {
       return;
     }
     
-    console.log("[DEBUG] Forcing friendly trader encounter on asteroid:", asteroid.id);
+    debugLog("[DEBUG] Forcing friendly trader encounter on asteroid:", asteroid.id);
     
     // Set asteroid to inhabited and force friendly contact outcome
     generateAsteroidTruthValues(asteroid);
@@ -3259,7 +3263,7 @@ if (typeof window !== 'undefined') {
       optionHandlers: [
         (optionText, index) => {
           // TRADE button - open trader merchant
-          console.log("[TRADER] TRADE button clicked, asteroidId:", asteroid.id);
+          debugLog("[TRADER] TRADE button clicked, asteroidId:", asteroid.id);
           endEvent();
           openTraderMerchant(asteroid.id);
         },
@@ -3273,7 +3277,7 @@ if (typeof window !== 'undefined') {
     };
     
     startEvent(eventData);
-    console.log("[DEBUG] Friendly trader event started. Click 'TRADE' to test merchant.");
+    debugLog("[DEBUG] Friendly trader event started. Click 'TRADE' to test merchant.");
   };
 }
 
@@ -3405,7 +3409,7 @@ function advanceDays(days, lifeSupportMultiplier = 1) {
   
   // Debug logging (can be removed later)
   const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
-  console.log(`[advanceDays] +${d} days | Called from: ${caller} | Day: ${gameState.stats.day} → ${gameState.stats.day + d} | Life support: ${gameState.stats.lifeSupport.toFixed(1)}%`);
+  debugLog(`[advanceDays] +${d} days | Called from: ${caller} | Day: ${gameState.stats.day} → ${gameState.stats.day + d} | Life support: ${gameState.stats.lifeSupport.toFixed(1)}%`);
   
   // 1. Increment day
   gameState.stats.day += d;
@@ -3428,7 +3432,7 @@ function advanceDays(days, lifeSupportMultiplier = 1) {
   
   // Debug logging for life support change
   if (lifeSupportBefore !== gameState.stats.lifeSupport) {
-    console.log(`[advanceDays] Life support: ${lifeSupportBefore.toFixed(1)}% → ${gameState.stats.lifeSupport.toFixed(1)}% (drained ${lifeSupportDrain.toFixed(1)}%)`);
+    debugLog(`[advanceDays] Life support: ${lifeSupportBefore.toFixed(1)}% → ${gameState.stats.lifeSupport.toFixed(1)}% (drained ${lifeSupportDrain.toFixed(1)}%)`);
   }
 }
 
@@ -4181,7 +4185,7 @@ function drawMap() {
                 gameState.travel.scannedNodes = new Set();
               }
               gameState.travel.scannedNodes.add(node.id);
-              console.log("[SCAN] Added", node.type, node.id, "to scannedNodes");
+              debugLog("[SCAN] Added", node.type, node.id, "to scannedNodes");
             }
             // Stations and outposts are discovered (not scanned like asteroids/ships)
             if (node.type === "station" || node.type === "outpost") {
@@ -4207,11 +4211,11 @@ function drawMap() {
                 gameState.travel.deepScannedNodes = new Set();
               }
               gameState.travel.deepScannedNodes.add(node.id);
-              console.log("[DEEP SCAN] Marked", node.id, "for deep scan (will process in final pass)");
+              debugLog("[DEEP SCAN] Marked", node.id, "for deep scan (will process in final pass)");
               // Stations and outposts can also be deep scanned (though they don't have deep scan data yet)
               // They're already in discoveredNodes from basic scan
             } else {
-              console.log("[DEEP SCAN] Skipped", node.id, "type:", node.type, "isBasicScanned:", isBasicScanned, "scannedNodes:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
+              debugLog("[DEEP SCAN] Skipped", node.id, "type:", node.type, "isBasicScanned:", isBasicScanned, "scannedNodes:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
             }
           }
         }
@@ -4292,7 +4296,7 @@ function drawMap() {
                   gameState.travel.deepScannedNodes = new Set();
                 }
                 gameState.travel.deepScannedNodes.add(node.id);
-                console.log("[DEEP SCAN] Final pass: Processing", node.id);
+                debugLog("[DEEP SCAN] Final pass: Processing", node.id);
                 // Generate deep scan data based on node type
                 if (node.type === "asteroid") {
                   generateAsteroidDeepScanData(node);
@@ -4302,7 +4306,7 @@ function drawMap() {
                 // Stations and outposts can also be deep scanned (though they don't have deep scan data yet)
                 // They're already in discoveredNodes from basic scan
               } else {
-                console.log("[DEEP SCAN] Final pass: Skipped", node.id, "type:", node.type, "isBasicScanned:", isBasicScanned, "scannedNodes:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
+                debugLog("[DEEP SCAN] Final pass: Skipped", node.id, "type:", node.type, "isBasicScanned:", isBasicScanned, "scannedNodes:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
               }
             }
           }
@@ -5359,23 +5363,23 @@ function generateAsteroidTruthValues(node) {
     // Inhabited: 25% chance
     const rand = Math.random();
     node.inhabitedTruth = rand < 0.25;
-    console.log("[ASTEROID TRUTH] Generated inhabitedTruth for", node.id, ":", node.inhabitedTruth, "(random:", rand.toFixed(4), ", threshold: 0.25)");
+    debugLog("[ASTEROID TRUTH] Generated inhabitedTruth for", node.id, ":", node.inhabitedTruth, "(random:", rand.toFixed(4), ", threshold: 0.25)");
   } else {
-    console.log("[ASTEROID TRUTH] Using cached inhabitedTruth for", node.id, ":", node.inhabitedTruth);
+    debugLog("[ASTEROID TRUTH] Using cached inhabitedTruth for", node.id, ":", node.inhabitedTruth);
   }
   
   if (node.resourcesTruth === undefined) {
     // Resources: 35% chance
     const rand = Math.random();
     node.resourcesTruth = rand < 0.35;
-    console.log("[ASTEROID TRUTH] Generated resourcesTruth for", node.id, ":", node.resourcesTruth, "(random:", rand.toFixed(4), ", threshold: 0.35)");
+    debugLog("[ASTEROID TRUTH] Generated resourcesTruth for", node.id, ":", node.resourcesTruth, "(random:", rand.toFixed(4), ", threshold: 0.35)");
   }
   
   if (node.artifactTruth === undefined) {
     // Artifact: 10% chance (rare, but real)
     const rand = Math.random();
     node.artifactTruth = rand < 0.10;
-    console.log("[ASTEROID TRUTH] Generated artifactTruth for", node.id, ":", node.artifactTruth, "(random:", rand.toFixed(4), ", threshold: 0.10)");
+    debugLog("[ASTEROID TRUTH] Generated artifactTruth for", node.id, ":", node.artifactTruth, "(random:", rand.toFixed(4), ", threshold: 0.10)");
   }
 }
 
@@ -5390,9 +5394,9 @@ function generateAsteroidContactOutcome(node) {
     // Roll contact outcome: Friendly (65%), Hostile (35%)
     const rand = Math.random();
     node.contactOutcome = rand < 0.65 ? "friendly" : "hostile";
-    console.log("[ASTEROID CONTACT] Generated contactOutcome for", node.id, ":", node.contactOutcome, "(random:", rand.toFixed(4), ", threshold: 0.65)");
+    debugLog("[ASTEROID CONTACT] Generated contactOutcome for", node.id, ":", node.contactOutcome, "(random:", rand.toFixed(4), ", threshold: 0.65)");
   } else {
-    console.log("[ASTEROID CONTACT] Using cached contactOutcome for", node.id, ":", node.contactOutcome);
+    debugLog("[ASTEROID CONTACT] Using cached contactOutcome for", node.id, ":", node.contactOutcome);
   }
   return node.contactOutcome;
 }
@@ -5402,7 +5406,7 @@ function generateAsteroidContactOutcome(node) {
  * @param {Node} node Asteroid node
  */
 function generateAsteroidDeepScanData(node) {
-  console.log("[DEEP SCAN] Generating data for asteroid", node.id);
+  debugLog("[DEEP SCAN] Generating data for asteroid", node.id);
   
   // First, ensure truth values are generated and cached
   generateAsteroidTruthValues(node);
@@ -5427,7 +5431,7 @@ function generateAsteroidDeepScanData(node) {
       node.inhabited = "unknown";
     }
   }
-  console.log("[DEEP SCAN] Set inhabited to", node.inhabited, "(truth:", node.inhabitedTruth, ", accurate:", isAccurate, ")");
+  debugLog("[DEEP SCAN] Set inhabited to", node.inhabited, "(truth:", node.inhabitedTruth, ", accurate:", isAccurate, ")");
   
   // Resources: Convert truth to likelihood display
   // Always update display values when deep scanning
@@ -5441,7 +5445,7 @@ function generateAsteroidDeepScanData(node) {
       node.resources = "unknown";
     }
   }
-  console.log("[DEEP SCAN] Set resources to", node.resources, "(truth:", node.resourcesTruth, ", accurate:", isAccurate, ")");
+  debugLog("[DEEP SCAN] Set resources to", node.resources, "(truth:", node.resourcesTruth, ", accurate:", isAccurate, ")");
   
   // Anomalies: Based on artifactTruth (never shows "likely", only "Detected" or "None")
   // Always update when deep scanning
@@ -5455,7 +5459,7 @@ function generateAsteroidDeepScanData(node) {
     // Inaccurate scan: random
     node.anomalies = Math.random() < 0.5 ? "Detected" : "None";
   }
-  console.log("[DEEP SCAN] Set anomalies to", node.anomalies, "(truth:", node.artifactTruth, ", accurate:", isAccurate, ")");
+  debugLog("[DEEP SCAN] Set anomalies to", node.anomalies, "(truth:", node.artifactTruth, ", accurate:", isAccurate, ")");
   
   // Landing Risk: Safe/Moderately Safe/Moderately Dangerous/Dangerous
   if (!node.landingRisk || node.landingRisk === "Moderately Safe") {
@@ -5467,15 +5471,15 @@ function generateAsteroidDeepScanData(node) {
       cumulative += weights[i];
       if (rand < cumulative) {
         node.landingRisk = risks[i];
-        console.log("[DEEP SCAN] Set landingRisk to", node.landingRisk);
+        debugLog("[DEEP SCAN] Set landingRisk to", node.landingRisk);
         break;
       }
     }
   } else {
-    console.log("[DEEP SCAN] LandingRisk already set to", node.landingRisk);
+    debugLog("[DEEP SCAN] LandingRisk already set to", node.landingRisk);
   }
   
-  console.log("[DEEP SCAN] Final values for", node.id, ":", {
+  debugLog("[DEEP SCAN] Final values for", node.id, ":", {
     resources: node.resources,
     inhabited: node.inhabited,
     anomalies: node.anomalies,
@@ -6610,7 +6614,7 @@ function addItemToInventory(itemId, quantity, itemType) {
       gameState.inventory.supplies[itemId] = { id: itemId, qty: 0 };
     }
     gameState.inventory.supplies[itemId].qty += quantity;
-    console.log(`[INVENTORY] Added ${quantity}x ${itemId} to supplies (total: ${gameState.inventory.supplies[itemId].qty})`);
+    debugLog(`[INVENTORY] Added ${quantity}x ${itemId} to supplies (total: ${gameState.inventory.supplies[itemId].qty})`);
     return true;
   } else if (itemType === "part") {
     // Initialize part entry if it doesn't exist
@@ -6618,7 +6622,7 @@ function addItemToInventory(itemId, quantity, itemType) {
       gameState.inventory.parts[itemId] = 0;
     }
     gameState.inventory.parts[itemId] += quantity;
-    console.log(`[INVENTORY] Added ${quantity}x ${itemId} to parts (total: ${gameState.inventory.parts[itemId]})`);
+    debugLog(`[INVENTORY] Added ${quantity}x ${itemId} to parts (total: ${gameState.inventory.parts[itemId]})`);
     return true;
   } else {
     console.warn(`[INVENTORY] Unknown itemType: ${itemType}`);
@@ -6641,7 +6645,7 @@ function handleCheckout(locationId, location) {
   // Check if cart has items
   const hasItems = Object.values(cart).some(qty => qty > 0);
   if (!hasItems) {
-    console.log("[CHECKOUT] Cart is empty");
+    debugLog("[CHECKOUT] Cart is empty");
     return;
   }
   
@@ -6699,7 +6703,7 @@ function handleCheckout(locationId, location) {
   gameState.travel.generalStoreCartTotal = 0;
   
   // 3. Feedback
-  console.log(`[CHECKOUT] Purchase complete. Total: ${cartTotal} credits`);
+  debugLog(`[CHECKOUT] Purchase complete. Total: ${cartTotal} credits`);
   
   // Re-render to update UI (stays in BUY mode)
   renderGeneralStore(locationId, location);
@@ -6712,7 +6716,7 @@ function handleCheckout(locationId, location) {
  * @param {Location} location Location definition
  */
 function renderGeneralStore(locationId, location) {
-  console.log("[GENERAL STORE] renderGeneralStore called with locationId:", locationId, "location.type:", location?.type);
+  debugLog("[GENERAL STORE] renderGeneralStore called with locationId:", locationId, "location.type:", location?.type);
   if (!el.sceneContainer) {
     console.error("[GENERAL STORE] sceneContainer not found!");
     return;
@@ -6721,7 +6725,7 @@ function renderGeneralStore(locationId, location) {
   // Get the outpost node to get the actual name
   const node = mapNodes.find(n => n.id === locationId);
   const outpostName = node?.name || location.name || "OUTPOST";
-  console.log("[GENERAL STORE] Rendering for:", outpostName);
+  debugLog("[GENERAL STORE] Rendering for:", outpostName);
   
   // Return scene should already be stored when navigating to merchant
   // (set in NAVIGATE handler, SHOP_BUY/SHOP_SELL handlers, or landAtCurrentLocation)
@@ -6832,10 +6836,10 @@ function renderGeneralStore(locationId, location) {
     transition: background 0.1s, color 0.1s;
   `;
   buyButton.addEventListener("click", () => {
-    console.log("[GENERAL STORE] BUY button clicked, currentMode:", currentMode);
+    debugLog("[GENERAL STORE] BUY button clicked, currentMode:", currentMode);
     // Toggle buy mode: if already active, deactivate; otherwise activate and deactivate sell
     gameState.travel.generalStoreMode = currentMode === "buy" ? null : "buy";
-    console.log("[GENERAL STORE] New mode:", gameState.travel.generalStoreMode);
+    debugLog("[GENERAL STORE] New mode:", gameState.travel.generalStoreMode);
     // Re-render the general store to show the updated UI
     renderGeneralStore(locationId, location);
   });
@@ -6871,11 +6875,11 @@ function renderGeneralStore(locationId, location) {
     transition: background 0.1s, color 0.1s;
   `;
   sellButton.addEventListener("click", () => {
-    console.log("[GENERAL STORE] SELL button clicked, currentMode:", currentMode);
+    debugLog("[GENERAL STORE] SELL button clicked, currentMode:", currentMode);
     // Toggle sell mode: if already active, deactivate; otherwise activate and deactivate buy
     const newMode = currentMode === "sell" ? null : "sell";
     gameState.travel.generalStoreMode = newMode;
-    console.log("[GENERAL STORE] New mode:", gameState.travel.generalStoreMode);
+    debugLog("[GENERAL STORE] New mode:", gameState.travel.generalStoreMode);
     // Initialize sell selection when entering SELL mode
     if (newMode === "sell") {
       gameState.travel.generalStoreSellSelected = {};
@@ -7702,8 +7706,7 @@ function renderDockyard(locationId) {
     }
     gameState.stats.credits -= selected.cost;
     advanceDays(selected.days);
-    gameState.stats.hull = Math.min(100, gameState.stats.hull + selected.hull);
-    gameState.ship.integrity = gameState.stats.hull;
+    addShipIntegrity(gameState, selected.hull);
     gameState.travel.dockyardSelectionId = null;
     renderDockyard(locationId);
     render();
@@ -7885,9 +7888,7 @@ function renderOutpostDockyard(locationId) {
       }
       gameState.stats.credits -= selected.cost;
       advanceDays(selected.days);
-      gameState.stats.hull = Math.min(100, gameState.stats.hull + selected.hull);
-      gameState.stats.shipIntegrity = gameState.stats.hull;
-      gameState.ship.integrity = gameState.stats.hull;
+      addShipIntegrity(gameState, selected.hull);
       gameState.travel.outpostDockyardMessage = "Repair complete.";
       gameState.travel.outpostDockyardSelectionId = null;
       renderOutpostDockyard(locationId);
@@ -7967,9 +7968,7 @@ function renderOutpostDockyard(locationId) {
               actualRepair = repairAmount * 0.5;
             }
           }
-          gameState.stats.hull = Math.min(100, gameState.stats.hull + actualRepair);
-          gameState.stats.shipIntegrity = gameState.stats.hull;
-          gameState.ship.integrity = gameState.stats.hull;
+          addShipIntegrity(gameState, actualRepair);
           gameState.travel.outpostDockyardMessage = `${part.name} applied.`;
           renderOutpostDockyard(locationId);
           render();
@@ -9017,13 +9016,13 @@ function renderAdminOverlay(locationId) {
  * @param {string} asteroidId Asteroid node ID where trader was encountered
  */
 function openTraderMerchant(asteroidId) {
-  console.log("[TRADER MERCHANT] openTraderMerchant called with asteroidId:", asteroidId);
+  debugLog("[TRADER MERCHANT] openTraderMerchant called with asteroidId:", asteroidId);
   
   if (!asteroidId) {
     console.error("[TRADER MERCHANT] No asteroidId provided!");
     // Try to get current location as fallback
     asteroidId = gameState.travel.currentLocationId;
-    console.log("[TRADER MERCHANT] Using currentLocationId as fallback:", asteroidId);
+    debugLog("[TRADER MERCHANT] Using currentLocationId as fallback:", asteroidId);
     if (!asteroidId) {
       console.error("[TRADER MERCHANT] No currentLocationId either, cannot open trader merchant");
       return;
@@ -9035,7 +9034,7 @@ function openTraderMerchant(asteroidId) {
   if (gameState.travel.returnSceneId === null) {
     // Store current scene as return target (typically will be handled by event system, but store for consistency)
     gameState.travel.returnSceneId = gameState.travel.currentSceneId || "MAP";
-    console.log("[TRADER MERCHANT] Stored return scene:", gameState.travel.returnSceneId);
+    debugLog("[TRADER MERCHANT] Stored return scene:", gameState.travel.returnSceneId);
   }
   
   // Initialize per-asteroid caps and purchased counts (1-3 per item)
@@ -9124,7 +9123,7 @@ function renderTraderMerchant(asteroidId) {
     return;
   }
   
-  console.log("[TRADER MERCHANT] Rendering trader merchant for asteroid:", asteroidId);
+  debugLog("[TRADER MERCHANT] Rendering trader merchant for asteroid:", asteroidId);
   
   // Initialize cart if first time
   if (gameState.travel.traderMerchantCart === undefined) {
@@ -9877,9 +9876,9 @@ function renderScene(locationId, sceneId) {
   }
   
   // Debug logging
-  console.log(`[renderScene] instanceId: ${instanceId}, baseId: ${baseId}, sceneId: ${sceneId}, location.type: ${location.type}`);
-  console.log(`[renderScene] Generated image path: ${imagePath}`);
-  console.log(`[renderScene] Scene has ${sceneHotspots.length} hotspots`);
+  debugLog(`[renderScene] instanceId: ${instanceId}, baseId: ${baseId}, sceneId: ${sceneId}, location.type: ${location.type}`);
+  debugLog(`[renderScene] Generated image path: ${imagePath}`);
+  debugLog(`[renderScene] Scene has ${sceneHotspots.length} hotspots`);
   
   // Set background image (or placeholder if image doesn't exist)
   // Remove previous error handlers to prevent multiple bindings
@@ -9941,7 +9940,7 @@ function renderScene(locationId, sceneId) {
     sceneTitleEl.style.display = "none";
   }
   
-  console.log(`[renderScene] Creating ${sceneHotspots.length} hotspots`);
+  debugLog(`[renderScene] Creating ${sceneHotspots.length} hotspots`);
   
   // Create hotspot elements
   sceneHotspots.forEach((hotspot, index) => {
@@ -9960,18 +9959,18 @@ function renderScene(locationId, sceneId) {
       
       // Click handler with logging
       hotspotEl.addEventListener("click", () => {
-        console.log(`[Hotspot Click] baseId: ${baseId}, sceneId: ${sceneId}, label: ${hotspot.label}, action.type: ${hotspot.action.type}`);
+        debugLog(`[Hotspot Click] baseId: ${baseId}, sceneId: ${sceneId}, label: ${hotspot.label}, action.type: ${hotspot.action.type}`);
         dispatchAction(hotspot.action, instanceId);
       });
       
       // Hover effect is handled by CSS, no need for JavaScript handlers
       
       el.sceneHotspots.appendChild(hotspotEl);
-      console.log(`[renderScene] Created hotspot: ${hotspot.label} at (${hotspot.x * 100}%, ${hotspot.y * 100}%) size (${hotspot.w * 100}%, ${hotspot.h * 100}%)`);
+      debugLog(`[renderScene] Created hotspot: ${hotspot.label} at (${hotspot.x * 100}%, ${hotspot.y * 100}%) size (${hotspot.w * 100}%, ${hotspot.h * 100}%)`);
     }
   });
   
-  console.log(`[renderScene] Total hotspots in DOM: ${el.sceneHotspots.children.length}`);
+  debugLog(`[renderScene] Total hotspots in DOM: ${el.sceneHotspots.children.length}`);
   
         // Note: Outpost MERCHANT and station INTERIOR_MARKET are handled earlier (before scene rendering)
   // TRADE and COMBAT events are now shown directly from resolveAsteroidContact
@@ -9990,8 +9989,8 @@ function renderScene(locationId, sceneId) {
     el.sceneContainer.removeAttribute("hidden");
     el.sceneContainer.style.display = "flex";
     el.sceneContainer.style.visibility = "visible";
-    console.log(`[renderScene] Scene container displayed. Container dimensions: ${el.sceneContainer.offsetWidth}x${el.sceneContainer.offsetHeight}`);
-    console.log(`[renderScene] Scene hotspots container dimensions: ${el.sceneHotspots.offsetWidth}x${el.sceneHotspots.offsetHeight}`);
+    debugLog(`[renderScene] Scene container displayed. Container dimensions: ${el.sceneContainer.offsetWidth}x${el.sceneContainer.offsetHeight}`);
+    debugLog(`[renderScene] Scene hotspots container dimensions: ${el.sceneHotspots.offsetWidth}x${el.sceneHotspots.offsetHeight}`);
   }
 }
 
@@ -10242,9 +10241,7 @@ function handleAsteroidHunt(asteroidId) {
     }
   } else if (roll < 0.90) {
     const damage = rollInt(1, 3);
-    gameState.stats.hull = Math.max(0, gameState.stats.hull - damage);
-    gameState.stats.shipIntegrity = gameState.stats.hull;
-    gameState.ship.integrity = gameState.stats.hull;
+    addShipIntegrity(gameState, -damage);
     outcomeText = `A sharp outcrop scrapes the hull (-${damage}%).`;
     if (node) {
       logAdd("ASTEROID_EXPLORE", `Day ${gameState.stats.day}: Minor hull damage on ${node.name}.`, {
@@ -10417,9 +10414,7 @@ function handleAsteroidContactOutcome(asteroidId) {
   };
   if (contactType === "hostile") {
     const damage = rollInt(2, 6);
-    gameState.stats.hull = Math.max(0, gameState.stats.hull - damage);
-    gameState.stats.shipIntegrity = gameState.stats.hull;
-    gameState.ship.integrity = gameState.stats.hull;
+    addShipIntegrity(gameState, -damage);
     gameState.travel.activeContact = null;
     startAsteroidOutcome(
       asteroidId,
@@ -10745,7 +10740,7 @@ function handleAsteroidExplore(asteroidId) {
   generateAsteroidTruthValues(node);
   
   // Debug logging
-  console.log("[ASTEROID EXPLORE] Asteroid", asteroidId, "truth values:", {
+  debugLog("[ASTEROID EXPLORE] Asteroid", asteroidId, "truth values:", {
     inhabitedTruth: node.inhabitedTruth,
     resourcesTruth: node.resourcesTruth,
     artifactTruth: node.artifactTruth
@@ -11015,7 +11010,7 @@ function handleAsteroidMakeContact(asteroidId) {
       optionHandlers: [
         (optionText, index) => {
           // TRADE button - open trader merchant
-          console.log("[TRADER] TRADE button clicked, asteroidId:", asteroidId);
+          debugLog("[TRADER] TRADE button clicked, asteroidId:", asteroidId);
           // Set scene to MAP BEFORE ending event to prevent render() from re-triggering arrival event
           gameState.travel.currentSceneId = "MAP";
           gameState.travel.returnSceneId = "EXTERIOR";
@@ -11479,9 +11474,7 @@ function landAtCurrentLocation() {
       : (typeof gameState.stats.shipIntegrity === "number" ? gameState.stats.shipIntegrity : 100);
     const hullAfter = Math.max(0, Math.min(100, hullBefore - finalDamage));
     
-    gameState.stats.hull = hullAfter;
-    gameState.stats.shipIntegrity = hullAfter;
-    gameState.ship.integrity = hullAfter;
+    setShipIntegrity(gameState, hullAfter);
     
     gameState.travel.landingFlavorText = getLandingFlavorText(landingRisk, finalDamage, rolledDamage);
     if (finalDamage > 0) {
@@ -11492,7 +11485,7 @@ function landAtCurrentLocation() {
       });
     }
     
-    console.log("[ASTEROID LANDING] Applied costs: +1 day. New day:", gameState.stats.day, "life support:", gameState.stats.lifeSupport.toFixed(1) + "%", "landing damage:", finalDamage);
+    debugLog("[ASTEROID LANDING] Applied costs: +1 day. New day:", gameState.stats.day, "life support:", gameState.stats.lifeSupport.toFixed(1) + "%", "landing damage:", finalDamage);
   } else if (type === "ship") {
     startSceneId = "ARRIVAL";
   } else if (type === "earth" || type === "moon" || type === "mars") {
@@ -11507,7 +11500,7 @@ function landAtCurrentLocation() {
   
   // Set scene and render
   gameState.travel.currentSceneId = startSceneId;
-  console.log("[LAND]", instanceId, "→", startSceneId);
+  debugLog("[LAND]", instanceId, "→", startSceneId);
   render();
 }
 
@@ -11549,250 +11542,7 @@ function updateTravelButton() {
   el.actionTravel.textContent = "TRAVEL";
 }
 
-/**
- * Dispatch an action from a hotspot
- * @param {Action} action Action to dispatch
- * @param {string} locationId Current location ID
- */
-function dispatchAction(action, locationId) {
-  switch (action.type) {
-    case "NAVIGATE":
-      if (action.to) {
-        // Close overlays before changing scenes
-        closeAllOverlays();
-        // Set default dockyard tab when entering
-        if (action.to === "INTERIOR_DOCKYARD") {
-          gameState.travel.dockyardMode = "repair";
-          gameState.travel.dockyardSelectionId = null;
-        }
-        // Set default clinic tab when entering
-        if (action.to === "INTERIOR_CLINIC") {
-          gameState.travel.clinicMode = "treat";
-          gameState.travel.clinicSelectedMemberId = null;
-          gameState.travel.clinicSelectedTreatmentId = null;
-        }
-        if (action.to === "INTERIOR_CANTINA") {
-          gameState.travel.cantinaUI = { tab: "order", selectedOrderId: null, activeRumor: null };
-        }
-        if (action.to === "OUTPOST_MECHANIC") {
-          const locationDef = findLocationData(locationId);
-          if (locationDef?.type === "outpost") {
-            gameState.travel.outpostDockyardMode = "repair";
-            gameState.travel.outpostDockyardSelectionId = null;
-          }
-        }
-        if (action.to === "OUTPOST_RUMOR") {
-          gameState.travel.outpostRumorMessage = null;
-          gameState.travel.outpostRumorSelectedId = null;
-        }
-        
-        // Store return scene when navigating to merchant overlays
-        if (action.to === "MERCHANT") {
-          gameState.travel.returnSceneId = gameState.travel.currentSceneId || "MAP";
-          console.log("[NAVIGATE] Stored return scene for merchant:", gameState.travel.returnSceneId);
-        }
-        
-        // If returning from a nested service and returnSceneId is set, honor it
-        if ((action.to === "HUB" || action.to === "EXTERIOR") && gameState.travel.returnSceneId) {
-          gameState.travel.currentSceneId = gameState.travel.returnSceneId;
-          gameState.travel.returnSceneId = null;
-        } else {
-        gameState.travel.currentSceneId = action.to;
-        }
-        if (gameState.travel.currentSceneId === "HUB") {
-          closeAllOverlays();
-        }
-        render();
-      }
-      break;
-      
-    case "LEAVE_LOCATION":
-      // Finalize landing summary before leaving
-      logFinalizeLandingSummary();
-      // Ensure any overlay UI is cleared before returning to map
-      closeAllOverlays();
-      // Clear hub/return state
-      gameState.travel.stationHubPanelId = null;
-      gameState.travel.returnSceneId = null;
-      // Return to map (but keep currentLocationId - player is still at this location)
-      gameState.travel.currentSceneId = "MAP";
-      // Don't clear currentLocationId - player is still "arrived" at this location
-      render();
-      startAnimationLoop(); // Restart animation loop when returning to map
-      break;
-      
-    case "TURN_PANEL":
-      if (action.toPanelId) {
-        gameState.travel.stationHubPanelId = action.toPanelId;
-        render();
-      }
-      break;
-      
-    case "ENTER_SERVICE":
-      if (action.to) {
-        gameState.travel.returnSceneId = "HUB";
-        gameState.travel.currentSceneId = action.to;
-        render();
-      }
-      break;
-      
-    case "REPAIR":
-      // Check if player has enough credits
-      const repairCost = action.cost || 50;
-      const repairDays = action.days || 1;
-      const repairAmount = action.shipIntegrityDelta ?? action.hullDelta ?? 20;
-      
-      if (gameState.stats.credits < repairCost) {
-        console.warn(`[REPAIR] Insufficient credits. Need ${repairCost}, have ${gameState.stats.credits}`);
-        // TODO: Show UI message to player
-        break;
-      }
-      
-      // Deduct credits
-      gameState.stats.credits -= repairCost;
-      
-      // Advance time (which consumes life support)
-      advanceDays(repairDays);
-      
-      // Repair ship integrity (use stats.hull)
-      gameState.stats.hull = Math.min(100, gameState.stats.hull + repairAmount);
-      gameState.ship.integrity = gameState.stats.hull; // Keep in sync
-      
-      console.log(`[REPAIR] Repaired ${repairAmount} ship integrity, cost ${repairCost} credits, took ${repairDays} day(s)`);
-      render();
-      break;
-      
-    case "HEAL":
-      // Check if player has enough credits
-      const healCost = action.cost || 50;
-      const healDays = action.days || 1;
-      
-      if (gameState.stats.credits < healCost) {
-        console.warn(`[HEAL] Insufficient credits. Need ${healCost}, have ${gameState.stats.credits}`);
-        // TODO: Show UI message to player
-        break;
-      }
-      
-      // Deduct credits
-      gameState.stats.credits -= healCost;
-      
-      // Advance time (which consumes life support)
-      advanceDays(healDays);
-      
-      // Heal crew (stub: improve worst crew member status)
-      // TODO: Implement proper crew healing logic
-      const worstCrewMember = gameState.crew.members.find(m => {
-        const badStatuses = ["Dying", "Critical", "Unconscious", "Infected", "Sick", "Wounded", "Injured"];
-        return badStatuses.includes(m.status);
-      });
-      
-      if (worstCrewMember) {
-        worstCrewMember.status = "Recovering";
-        console.log(`[HEAL] Improved ${worstCrewMember.name}'s status to Recovering`);
-      } else {
-        console.log(`[HEAL] No crew members in need of healing`);
-      }
-      
-      console.log(`[HEAL] Healed crew, cost ${healCost} credits, took ${healDays} day(s)`);
-      render();
-      break;
-      
-    case "SHOP_BUY":
-      // Navigate to general store in BUY mode
-      // Store return scene if not already set (should be EXTERIOR for stations)
-      if (gameState.travel.returnSceneId === null) {
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
-        console.log("[SHOP_BUY] Stored return scene:", gameState.travel.returnSceneId);
-      }
-      gameState.travel.generalStoreMode = "buy";
-      if (gameState.travel.currentSceneId !== "GENERAL_STORE_ROOM") {
-        gameState.travel.currentSceneId = "INTERIOR_MARKET";
-      }
-      render();
-      break;
-      
-    case "SHOP_SELL":
-      // Navigate to general store in SELL mode
-      // Store return scene if not already set (should be EXTERIOR for stations)
-      if (gameState.travel.returnSceneId === null) {
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
-        console.log("[SHOP_SELL] Stored return scene:", gameState.travel.returnSceneId);
-      }
-      gameState.travel.generalStoreMode = "sell";
-      if (gameState.travel.currentSceneId !== "GENERAL_STORE_ROOM") {
-        gameState.travel.currentSceneId = "INTERIOR_MARKET";
-      }
-      render();
-      break;
-      
-    case "INFO":
-      // Placeholder for info actions
-      console.log(`[Info Action] ${action.type} clicked`);
-      break;
-
-    case "OUTPOST_EXPLORE":
-      handleOutpostExplore(locationId);
-      break;
-
-    case "OPEN_DOCKYARD":
-      gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
-      gameState.travel.serviceOverlay = "dockyard";
-      gameState.travel.dockyardMode = "repair";
-      gameState.travel.dockyardSelectionId = null;
-      render();
-      break;
-
-    case "OPEN_CLINIC":
-      gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
-      gameState.travel.serviceOverlay = "clinic";
-      gameState.travel.clinicMode = "treat";
-      gameState.travel.clinicSelectedMemberId = null;
-      gameState.travel.clinicSelectedTreatmentId = null;
-      render();
-      break;
-
-    case "OPEN_CANTINA":
-      gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
-      gameState.travel.serviceOverlay = "cantina";
-      gameState.travel.cantinaUI = { tab: "order", selectedOrderId: null, activeRumor: null };
-      render();
-      break;
-
-    case "OPEN_ADMIN":
-      gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
-      gameState.travel.serviceOverlay = "admin";
-      render();
-      break;
-      
-    case "ASTEROID_EXPLORE_SCENE":
-      handleAsteroidExploreScene(locationId);
-      break;
-      
-    case "ASTEROID_VISTA":
-      handleAsteroidVista(locationId);
-      break;
-      
-    case "ASTEROID_HUNT":
-      handleAsteroidHunt(locationId);
-      break;
-      
-    case "ASTEROID_APPROACH":
-      handleAsteroidApproachStructure(locationId);
-      break;
-      
-    case "ASTEROID_RETURN_EXTERIOR":
-      gameState.travel.currentSceneId = "EXTERIOR";
-      render();
-      break;
-      
-    case "ASTEROID_LEAVE":
-      handleAsteroidLeave(locationId);
-      break;
-      
-    default:
-      console.warn(`Unknown action type: ${action.type}`);
-  }
-}
+// dispatchAction is created after all handlers exist — see createDispatchAction() below.
 
 function renderCrew() {
   const viewportContent = document.getElementById("viewport-content");
@@ -11858,7 +11608,7 @@ function renderCrew() {
           e.stopPropagation();
           if (useMedicalSupply(supplyDef.id, member.id)) {
             // Success - treatment applied, UI will update via render()
-            console.log(`Treated ${member.name} with ${supplyDef.name}`);
+            debugLog(`Treated ${member.name} with ${supplyDef.name}`);
           }
         });
         treatmentOptions.appendChild(treatButton);
@@ -11985,7 +11735,7 @@ function renderInventory() {
       supplyEntry.title = `Click to use ${supplyDef.name}`;
       supplyEntry.addEventListener("click", () => {
         if (useSupply(supplyDef.id)) {
-          console.log(`Used ${supplyDef.name}`);
+          debugLog(`Used ${supplyDef.name}`);
         }
       });
     }
@@ -12042,7 +11792,7 @@ function renderInventory() {
       partEntry.style.cursor = "pointer";
       partEntry.addEventListener("click", () => {
         if (useRepairPart(partDef.id)) {
-          console.log(`Used ${partDef.name}`);
+          debugLog(`Used ${partDef.name}`);
         }
       });
     }
@@ -12053,7 +11803,7 @@ function renderInventory() {
       partEntry.style.cursor = "pointer";
       partEntry.addEventListener("click", () => {
         if (applyUpgrade(partDef.id)) {
-          console.log(`Applied ${partDef.name}`);
+          debugLog(`Applied ${partDef.name}`);
         }
       });
     }
@@ -12622,10 +12372,8 @@ function getApplicableMedicalSupplies(crewStatus) {
  * @param {string} cause Optional flavor text describing the cause
  */
 function applyShipDamage(damageAmount, cause = "") {
-  // Reduce ship integrity
-  gameState.stats.shipIntegrity = Math.max(0, gameState.stats.shipIntegrity - damageAmount);
-  gameState.ship.integrity = gameState.stats.shipIntegrity; // Keep in sync
-  
+  addShipIntegrity(gameState, -damageAmount);
+
   // Randomly assign damage to one subsystem
   const subsystems = ["STRUCTURAL", "ELECTRICAL", "LIFE_SUPPORT"];
   const randomSubsystem = subsystems[Math.floor(Math.random() * subsystems.length)];
@@ -12705,10 +12453,8 @@ function useRepairPart(partId) {
     }
   }
   
-  // Apply integrity repair
-  gameState.stats.shipIntegrity = Math.min(100, gameState.stats.shipIntegrity + actualRepair);
-  gameState.ship.integrity = gameState.stats.shipIntegrity; // Keep in sync
-  
+  addShipIntegrity(gameState, actualRepair);
+
   // Consume 1 quantity
   gameState.inventory.parts[partId]--;
   
@@ -12782,8 +12528,7 @@ function render() {
   renderStats();
   updateTravelButton();
   
-  // Keep ship integrity in sync with shipIntegrity
-  gameState.ship.integrity = gameState.stats.shipIntegrity;
+  syncHullIntegrity(gameState);
   
   // Show appropriate view based on current tab
   if (gameState.meta.tab === "CREW") {
@@ -13017,6 +12762,24 @@ function render() {
           startAnimationLoop();
         }
         renderPreview();
+      } else if (shouldSuppressTravelMapFallback(gameState)) {
+        // Trader / merchant overlay: scene branch was skipped on purpose — do not force MAP.
+        if (el.canvas) {
+          el.canvas.hidden = false;
+          el.canvas.removeAttribute("hidden");
+          el.canvas.style.display = "block";
+          el.canvas.style.visibility = "visible";
+        }
+        if (el.sceneContainer) {
+          el.sceneContainer.hidden = false;
+          el.sceneContainer.removeAttribute("hidden");
+          el.sceneContainer.style.display = "flex";
+          el.sceneContainer.style.visibility = "visible";
+        }
+        if (gameState.travel.animationLoopId === null) {
+          startAnimationLoop();
+        }
+        renderPreview();
       } else {
         // Fallback: if scene data is missing, return to map
         if (el.canvas) {
@@ -13227,7 +12990,7 @@ function wireUI() {
         gameState.travel.selectedDestinationId = null;
         gameState.travel.currentSceneId = "MAP";
         
-        console.log("[ARRIVE]", selectedId, "scene=MAP");
+        debugLog("[ARRIVE]", selectedId, "scene=MAP");
         
         // If landing on the broadcast station, advance to next station
         const routeOrder = ["earth", "outpost-0", "station-01", "outpost-1", "station-02", "outpost-2", "station-03", "mars"];
@@ -13363,7 +13126,7 @@ function wireUI() {
   function performScan(scanCenterRing, scanCenterAngle, isDeepScan, isDoubleRadius) {
     // Only scan when on the map view
     if (gameState.meta.tab !== "TRAVEL" || gameState.travel.currentSceneId !== "MAP") {
-      console.log("[SCAN] Blocked: not on MAP view");
+      debugLog("[SCAN] Blocked: not on MAP view");
       // Clear any stale scan pulse state if somehow we're not on MAP
       if (gameState.travel.scanPulse.isActive) {
         gameState.travel.scanPulse.isActive = false;
@@ -13374,7 +13137,7 @@ function wireUI() {
     
     // Don't start a new scan if one is already active
     if (gameState.travel.scanPulse.isActive) {
-      console.log("[SCAN] Blocked: scan already active");
+      debugLog("[SCAN] Blocked: scan already active");
       return;
     }
     
@@ -13382,12 +13145,12 @@ function wireUI() {
     if (isDeepScan) {
       const selectedId = gameState.travel.selectedLocationId || gameState.travel.selectedDestinationId;
       if (!selectedId) {
-        console.log("[SCAN] Blocked: deep scan requires target selection");
+        debugLog("[SCAN] Blocked: deep scan requires target selection");
         return;
       }
       const targetNode = mapNodes.find(n => n.id === selectedId);
       if (!targetNode) {
-        console.log("[SCAN] Blocked: target node not found", selectedId);
+        debugLog("[SCAN] Blocked: target node not found", selectedId);
         return;
       }
       
@@ -13400,14 +13163,14 @@ function wireUI() {
         isBasicScanned = true;
       } else if (targetNode.type === "asteroid" || targetNode.type === "ship") {
         isBasicScanned = gameState.travel.scannedNodes && gameState.travel.scannedNodes.has(selectedId);
-        console.log("[SCAN] Deep scan check for", targetNode.type, selectedId, "isBasicScanned:", isBasicScanned, "scannedNodes has:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
+        debugLog("[SCAN] Deep scan check for", targetNode.type, selectedId, "isBasicScanned:", isBasicScanned, "scannedNodes has:", gameState.travel.scannedNodes ? Array.from(gameState.travel.scannedNodes) : "null");
       } else if (targetNode.type === "station" || targetNode.type === "outpost") {
         isBasicScanned = gameState.travel.discoveredNodes && gameState.travel.discoveredNodes.has(selectedId);
-        console.log("[SCAN] Deep scan check for", targetNode.type, selectedId, "isBasicScanned:", isBasicScanned, "discoveredNodes has:", gameState.travel.discoveredNodes ? Array.from(gameState.travel.discoveredNodes) : "null");
+        debugLog("[SCAN] Deep scan check for", targetNode.type, selectedId, "isBasicScanned:", isBasicScanned, "discoveredNodes has:", gameState.travel.discoveredNodes ? Array.from(gameState.travel.discoveredNodes) : "null");
       }
       
       if (!isBasicScanned) {
-        console.log("[SCAN] Blocked: target not basic scanned/discovered", selectedId, "type:", targetNode.type);
+        debugLog("[SCAN] Blocked: target not basic scanned/discovered", selectedId, "type:", targetNode.type);
         return;
       }
     }
@@ -13418,7 +13181,7 @@ function wireUI() {
     // Double radius if requested
     if (isDoubleRadius) {
       scanRadius *= 2;
-      console.log("[SCAN] Double radius enabled, new radius:", scanRadius);
+      debugLog("[SCAN] Double radius enabled, new radius:", scanRadius);
     }
     
     // Start scan pulse animation
@@ -13429,7 +13192,7 @@ function wireUI() {
     gameState.travel.scanPulse.maxRadius = scanRadius;
     gameState.travel.scanPulse.isDeepScan = isDeepScan;
     
-    console.log("[SCAN] Started", isDeepScan ? "deep" : "basic", "scan at ring", scanCenterRing, "angle", scanCenterAngle, "radius", scanRadius);
+    debugLog("[SCAN] Started", isDeepScan ? "deep" : "basic", "scan at ring", scanCenterRing, "angle", scanCenterAngle, "radius", scanRadius);
     
     // If this is a basic scan, switch to deep scan mode for next time
     if (!isDeepScan) {
@@ -13452,7 +13215,7 @@ function wireUI() {
     // Check for command-click (Mac) or Ctrl-click (Windows) to double scan radius
     const isDoubleRadius = e.metaKey || e.ctrlKey;
     
-    console.log("[SCAN] Button clicked", {
+    debugLog("[SCAN] Button clicked", {
       tab: gameState.meta.tab,
       sceneId: gameState.travel.currentSceneId,
       currentLocationId: gameState.travel.currentLocationId,
@@ -13475,7 +13238,7 @@ function wireUI() {
       // Validate that we have a target selected
       if (!selectedId) {
         // No target selected - fall back to basic scan
-        console.log("[SCAN] Deep scan requested but no target selected, falling back to basic scan");
+        debugLog("[SCAN] Deep scan requested but no target selected, falling back to basic scan");
         isDeepScan = false;
         gameState.travel.scanMode = "scan";
         if (el.actionScan) {
@@ -13518,7 +13281,7 @@ function wireUI() {
     if (!isDeepScan) {
       // Basic scan: centered on player ship
       const currentLocationId = gameState.travel.currentLocationId;
-      console.log("[SCAN] Looking for current location node:", currentLocationId);
+      debugLog("[SCAN] Looking for current location node:", currentLocationId);
       const currentLocationNode = mapNodes.find(n => n.id === currentLocationId);
       if (!currentLocationNode) {
         console.error("[SCAN] Error: current location node not found", currentLocationId, "Available nodes:", mapNodes.map(n => n.id).filter(id => id.includes("station-03")));
@@ -13958,8 +13721,26 @@ function wireUI() {
   });
 }
 
+const dispatchAction = createDispatchAction({
+  gameState,
+  render,
+  advanceDays,
+  closeAllOverlays,
+  findLocationData,
+  handleOutpostExplore,
+  handleAsteroidExploreScene,
+  handleAsteroidVista,
+  handleAsteroidHunt,
+  handleAsteroidApproachStructure,
+  handleAsteroidLeave,
+  logFinalizeLandingSummary,
+  startAnimationLoop,
+});
+
 // Wait for DOM to be fully loaded before initializing
 function initGame() {
+  initDebugFromUrl();
+
   // Initialize random outpost image mapping for this playthrough
   if (!gameState.travel.outpostImageMapping) {
     gameState.travel.outpostImageMapping = initializeOutpostImageMapping();
