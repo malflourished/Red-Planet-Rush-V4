@@ -54,15 +54,59 @@ Look for messages in the console:
 
 ## Step 4: Verify File Structure
 
-Your folder should look like this:
+Your folder should look roughly like this (the cleanup-phase modules are
+linked in by `main.js` via `import` statements):
+
 ```
 Red-Planet-Rush-V4/
   ├── index.html
   ├── main.js
-  └── style.css
+  ├── style.css
+  ├── assets/
+  │   ├── scenes/
+  │   │   ├── planets/             earth.png, moon.png, mars-01.png
+  │   │   ├── outposts/<setId>/    arrival.png, interior.png
+  │   │   ├── stations/            <scene>-<instanceId>.jpg
+  │   │   ├── asteroids/arrival/   asteroid_arrival_NN.png
+  │   │   └── asteroids/surface/   asteroid_surface_NN.png
+  │   └── items/supplies/          air-canister_*.png, life-support_*, ...
+  └── js/
+      ├── debug.js
+      ├── hull.js
+      ├── time.js                  advanceDays + per-day hooks
+      ├── scheduler.js             rAF dirty-render + zoom constants
+      ├── travelViewMode.js
+      ├── dispatchAction.js
+      ├── state/initialState.js    documented gameState shape
+      ├── map/route.js             Moon→Mars route + ring helpers
+      ├── map/orbital.js           pure orbital math
+      └── assets/manifest.js       canonical asset paths
 ```
 
-All three files must be in the same folder!
+Because `main.js` uses ES modules (`<script type="module" src="main.js">`),
+the page **must be opened over HTTP**, not via `file://`. From the repo
+root, run a local server:
+
+```
+python3 -m http.server 8080
+```
+
+Then visit `http://localhost:8080/index.html`.
+
+## Step 4b: Missing Images
+
+If scenes load but show black backgrounds, the asset tree under `assets/`
+is incomplete. The console will log lines like:
+
+```
+[renderScene] Scene image missing: assets/scenes/asteroids/arrival/asteroid_arrival_07.png
+```
+
+Check `js/assets/manifest.js` for the canonical path layout the game
+expects. The `midjourney_session/` segment in asteroid surface paths is a
+known carry-over from content generation; it's controlled by
+`ASTEROID_SURFACE_DIR` in the manifest and should be flipped to
+`assets/scenes/asteroids/surface` once content is migrated.
 
 ## Step 5: Test Basic Functionality
 

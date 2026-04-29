@@ -2,6 +2,55 @@ import { initDebugFromUrl, debugLog } from "./js/debug.js";
 import { syncHullIntegrity, addShipIntegrity, setShipIntegrity } from "./js/hull.js";
 import { shouldSuppressTravelMapFallback } from "./js/travelViewMode.js";
 import { createDispatchAction } from "./js/dispatchAction.js";
+import {
+  now as perfNow,
+  scheduleRender,
+  flushRender,
+  setRenderFunction,
+  ZOOM_SCALES,
+  MIN_CONTINUOUS_ZOOM,
+  MAX_CONTINUOUS_ZOOM,
+  resolveDiscreteZoom,
+} from "./js/scheduler.js";
+import { createAdvanceDays } from "./js/time.js";
+import {
+  ROUTE_SCALE_FACTOR,
+  TOTAL_MOON_TO_MARS_DAYS,
+  EARTH_ORBITAL_PERIOD,
+  MARS_ORBITAL_PERIOD,
+  SHIP_SPEED,
+  GAME_DEADLINE,
+  MARS_ORBITAL_PROGRESS,
+  EARTH_START_RING,
+  MOON_START_RING,
+  MARS_END_RING,
+  TRAVELABLE_RING_RANGE,
+  ROUTE_ORDER,
+  baseRouteStructure,
+  generateRandomizedRoute,
+  calculateCumulativeTravelTimes as routeCumulativeTravelTimes,
+  calculateRingFromTravelTime as routeCalculateRingFromTravelTime,
+  normalizeNodeIdForRoute as routeNormalizeNodeIdForRoute,
+  getStationInstances as routeGetStationInstances,
+} from "./js/map/route.js";
+import {
+  supplyImage,
+  asteroidSurfaceImage,
+  asteroidSurfaceNumbers,
+  asteroidArrivalImage,
+  outpostImage,
+  stationImage,
+  shipImage,
+  planetImage,
+} from "./js/assets/manifest.js";
+import { createInitialState } from "./js/state/initialState.js";
+import {
+  calculateOrbitalAngle,
+  getBaseOrbitalPeriod,
+  generateRandomOrbitalPeriod,
+  generateRandomInitialAngle,
+  generateRandomFullAngle,
+} from "./js/map/orbital.js";
 
 /*
 Red Planet Rush – Prototype
@@ -46,134 +95,24 @@ Constraints:
  */
 // @typedef Node
 
-/**
- * Route structure: Moon > Outpost 0 > Station 01 > Outpost > Station 02 > Outpost > Station 03 > Mars
- * Each segment has intermediate stops that appear at different zoom levels
- */
-// Total Moon to Mars journey should be 300 days
-// Current route total: 2+3+2+3+2+3+5 = 20 days
-// Scale factor: 300/20 = 15x
-const ROUTE_SCALE_FACTOR = 15;
-const TOTAL_MOON_TO_MARS_DAYS = 300;
-
-// Orbital mechanics constants
-const EARTH_ORBITAL_PERIOD = 365; // days (Earth year)
-const MARS_ORBITAL_PERIOD = 687;
-
-// Ship travel constants
-// Ship speed in ring units per day (constant)
-// Calibrated for reasonable travel times:
-// - Short trips (0.2-0.5 ring units): 5-10 days  
-// - Long trips (4 ring units moon to mars): ~100 days
-// This leaves ~200 days buffer inside the 300-day deadline for detours, repairs, events
-// Using 0.04 ring units/day: 0.3 units = 7.5 days, 0.5 units = 12.5 days, 4 units = 100 days
-// This provides good balance between short and long trips
-const SHIP_SPEED = 0.04; // ring units per day
-const GAME_DEADLINE = 300; // days
-
-// Calculate Mars position after 300 days
-// Mars moves: 300/687 ≈ 0.437 (43.7% of its orbit) in 300 days
-const MARS_ORBITAL_PROGRESS = GAME_DEADLINE / MARS_ORBITAL_PERIOD; // ≈ 0.437
-
-// Ring system: Ring 1 = Earth starting position, Ring 5 = Mars after 300 days
-// All travelable locations should be between these two points
-const EARTH_START_RING = 1;
-const MOON_START_RING = 1; // Keep for backward compatibility, but Earth is at ring 1
-const MARS_END_RING = 5;
-const TRAVELABLE_RING_RANGE = MARS_END_RING - MOON_START_RING; // 4 rings of travelable space
+// Route, orbital, and ring constants now live in js/map/route.js.
+// The named imports above re-introduce them into this scope for the rest
+// of main.js while we incrementally extract systems.
 
 // Dev flags
 const DEV_SEED_STARTING_ITEMS = true; // Enable/disable starter artifacts and items for testing
 
-// Base route structure (used as template for randomization)
-// Stops removed - will be added back later
-const baseRouteStructure = {
-  segments: [
-    { from: "earth", to: "outpost-0", days: 2 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "outpost-0", to: "station-01", days: 3 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "station-01", to: "outpost-1", days: 2 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "outpost-1", to: "station-02", days: 3 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "station-02", to: "outpost-2", days: 2 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "outpost-2", to: "station-03", days: 3 * ROUTE_SCALE_FACTOR, intermediate: [] },
-    { from: "station-03", to: "mars", days: 5 * ROUTE_SCALE_FACTOR, intermediate: [] },
-  ]
-};
-
-/**
- * Generate randomized route segments with +/- 5 days variation per segment
- * All segments are then scaled proportionally to ensure total = 300 days
- * @returns {Array} Randomized route segments
- */
-function generateRandomizedRoute() {
-  const VARIATION_RANGE = 5; // +/- 5 days variation
-  
-  // Create randomized segments
-  const randomizedSegments = baseRouteStructure.segments.map(segment => {
-    // Apply random variation of +/- 5 days
-    const variation = (Math.random() * 2 - 1) * VARIATION_RANGE; // -5 to +5
-    const randomizedDays = Math.max(1, segment.days + variation); // Ensure at least 1 day
-    
-    return {
-      from: segment.from,
-      to: segment.to,
-      days: randomizedDays,
-      intermediate: [...segment.intermediate] // Copy intermediate array
-    };
-  });
-  
-  // Calculate total days
-  const totalDays = randomizedSegments.reduce((sum, seg) => sum + seg.days, 0);
-  
-  // Scale all segments proportionally to ensure total = 400 days
-  const scaleFactor = TOTAL_MOON_TO_MARS_DAYS / totalDays;
-  const scaledSegments = randomizedSegments.map(segment => ({
-    ...segment,
-    days: Math.round(segment.days * scaleFactor)
-  }));
-  
-  // Verify total (may be off by 1-2 due to rounding, adjust last segment if needed)
-  const finalTotal = scaledSegments.reduce((sum, seg) => sum + seg.days, 0);
-  const difference = TOTAL_MOON_TO_MARS_DAYS - finalTotal;
-  if (difference !== 0 && scaledSegments.length > 0) {
-    // Adjust the last segment to make total exactly 400
-    scaledSegments[scaledSegments.length - 1].days += difference;
-  }
-  
-  return scaledSegments;
-}
-
 // Generate randomized route at initialization
 const routeStructure = {
-  segments: generateRandomizedRoute()
+  segments: generateRandomizedRoute(),
 };
 
-/**
- * Calculate cumulative travel times from Moon for all main locations
- * @returns {Object} Map of location ID to cumulative days from Moon
- */
-function calculateCumulativeTravelTimes() {
-  const routeOrder = ["earth", "outpost-0", "station-01", "outpost-1", "station-02", "outpost-2", "station-03", "mars"];
-  const cumulativeTimes = { "earth": 0 };
-  
-  let cumulative = 0;
-  for (let i = 0; i < routeStructure.segments.length; i++) {
-    cumulative += routeStructure.segments[i].days;
-    cumulativeTimes[routeOrder[i + 1]] = cumulative;
-  }
-  
-  return cumulativeTimes;
-}
-
 // Calculate cumulative travel times from randomized route
-const cumulativeTravelTimes = calculateCumulativeTravelTimes();
+const cumulativeTravelTimes = routeCumulativeTravelTimes(routeStructure.segments);
 
-/**
- * Get all station instances for a given base ID
- * @param {string} baseId Station base ID (e.g., "station-01")
- * @returns {string[]} Array of instance IDs (e.g., ["station-01-a", "station-01-b", "station-01-c", "station-01-d"])
- */
+/** Get all station instances for a given base id (e.g. "station-01"). */
 function getStationInstances(baseId) {
-  return ['a', 'b', 'c', 'd'].map(suffix => `${baseId}-${suffix}`);
+  return routeGetStationInstances(baseId);
 }
 
 /**
@@ -317,125 +256,14 @@ function initializeRevealedNodes() {
   }
 }
 
-// Calculate ring positions based on cumulative travel time from Moon
-// Ring position = MOON_START_RING + (cumulativeDays / TOTAL_MOON_TO_MARS_DAYS) * TRAVELABLE_RING_RANGE
-function calculateRingFromTravelTime(cumulativeDays) {
-  return MOON_START_RING + (cumulativeDays / TOTAL_MOON_TO_MARS_DAYS) * TRAVELABLE_RING_RANGE;
-}
+// Ring position helper now lives in js/map/route.js. Re-export under the
+// original name so the rest of main.js can keep using it unchanged.
+const calculateRingFromTravelTime = routeCalculateRingFromTravelTime;
 
-/**
- * Calculate orbital angle for a location based on current day and orbital period
- * @param {number} day Current game day
- * @param {number} orbitalPeriod Orbital period in days
- * @param {number} initialAngle Initial angle offset (default 0)
- * @returns {number} Angle in radians
- */
-function calculateOrbitalAngle(day, orbitalPeriod, initialAngle = 0) {
-  // Angle = (day / orbitalPeriod) * 2π + initialAngle
-  return ((day / orbitalPeriod) * 2 * Math.PI) + initialAngle;
-}
-
-/**
- * Get orbital period for a location type (base period, can be overridden by node.orbitalPeriod)
- * @param {string} locationType Location type (earth, moon, station, outpost, mars, asteroid, ship)
- * @returns {number} Base orbital period in days
- */
-function getBaseOrbitalPeriod(locationType) {
-  if (locationType === "mars") {
-    return MARS_ORBITAL_PERIOD; // 687 days
-  }
-  if (locationType === "asteroid" || locationType === "ship") {
-    // Asteroids and ships use Earth's orbital period as base (will have ±80% variation)
-    return EARTH_ORBITAL_PERIOD; // 365 days
-  }
-  // Moon, stations, and outposts use Earth's orbital period
-  return EARTH_ORBITAL_PERIOD; // 365 days
-}
-
-/**
- * Generate a random orbital period based on location type with variation
- * @param {string} locationType Location type
- * @param {number} ring Optional ring number (for stations/outposts to calculate ring-based period)
- * @returns {number} Randomized orbital period in days
- */
-function generateRandomOrbitalPeriod(locationType, ring = null) {
-  const basePeriod = getBaseOrbitalPeriod(locationType);
-  
-  // Ships: Only Fast, Average, or Slow speeds (75-600 days)
-  if (locationType === "ship") {
-    // Randomly distribute across Fast (75-150), Average (200-400), and Slow (400-600)
-    const rand = Math.random();
-    if (rand < 0.33) {
-      // Fast: 75-150 days (reduced by 25% from 100-200)
-      return Math.round(75 + Math.random() * 75);
-    } else if (rand < 0.67) {
-      // Average: 200-400 days
-      return Math.round(200 + Math.random() * 200);
-    } else {
-      // Slow: 400-600 days
-      return Math.round(400 + Math.random() * 200);
-    }
-  }
-  
-  // Asteroids have weighted distribution:
-  // 5% Really Fast (100-119 days), 35% Fast (120-199), 30% Average (200-399),
-  // 25% Slow (400-450), 5% Really Slow (451-500)
-  if (locationType === "asteroid") {
-    const rand = Math.random();
-    if (rand < 0.05) {
-      // 5% Really Fast: 100-119 days
-      return Math.round(100 + Math.random() * 19);
-    } else if (rand < 0.40) {
-      // 35% Fast: 120-199 days
-      return Math.round(120 + Math.random() * 79);
-    } else if (rand < 0.70) {
-      // 30% Average: 200-399 days
-      return Math.round(200 + Math.random() * 199);
-    } else if (rand < 0.95) {
-      // 25% Slow: 400-450 days
-      return Math.round(400 + Math.random() * 50);
-    } else {
-      // 5% Really Slow: 451-500 days
-      return Math.round(451 + Math.random() * 49);
-    }
-  }
-  
-  // Stations and outposts: ring-based orbital periods (25% slower per ring)
-  // Ring 1 = 365 days, Ring 2 = 456 days (365 * 1.25), Ring 3 = 570 days (456 * 1.25), etc.
-  // Outposts automatically get intermediate speeds based on their ring position
-  if ((locationType === "station" || locationType === "outpost") && ring !== null) {
-    // Calculate base period: 365 * (1.25 ^ (ring - 1))
-    // This gives: Ring 1 = 365, Ring 2 = 456, Ring 3 = 570, etc.
-    const ringBasedPeriod = EARTH_ORBITAL_PERIOD * Math.pow(1.25, ring - 1);
-    
-    // Apply +/- 15% variation
-    const variation = (Math.random() * 0.3 - 0.15); // -0.15 to +0.15
-    return Math.round(ringBasedPeriod * (1 + variation));
-  }
-  
-  // Fallback for other locations: use base period with +/- 15% variation
-  const variation = (Math.random() * 0.3 - 0.15); // -0.15 to +0.15
-  return Math.round(basePeriod * (1 + variation));
-}
-
-/**
- * Generate a random initial angle constrained to forward direction (between Moon and Mars)
- * Locations should start somewhere in the forward arc (0 to π/2 or -π/2 to 0)
- * @returns {number} Random initial angle in radians
- */
-function generateRandomInitialAngle() {
-  // Constrain to forward direction: -π/2 to π/2 (90 degrees forward arc)
-  // This ensures locations start between Moon and Mars positions
-  return (Math.random() * Math.PI) - (Math.PI / 2); // -π/2 to π/2
-}
-
-/**
- * Generate a random initial angle for asteroids/ships (full 360 degrees)
- * @returns {number} Random initial angle in radians (0 to 2π)
- */
-function generateRandomFullAngle() {
-  return Math.random() * Math.PI * 2; // 0 to 2π
-}
+// Orbital helpers (calculateOrbitalAngle, getBaseOrbitalPeriod,
+// generateRandomOrbitalPeriod, generateRandomInitialAngle,
+// generateRandomFullAngle) now live in js/map/orbital.js and are imported
+// at the top of this file.
 
 /**
  * List of Greek mythological names for asteroid naming
@@ -500,10 +328,11 @@ function initializeCrew() {
     "Sheriff", "Researcher", "Prospector", "Negotiator", "Mechanic", "Droid"
   ];
   
+  // Start runs with manageable problems, not immediate death spirals.
+  // Severe statuses are reserved for events and difficulty tuning.
   const statuses = [
-    "Healthy", "Injured", "Wounded", "Sick", "Critical", "Recovering",
-    "Stressed", "Panicked", "Resilient", "Exhausted", "Malnourished",
-    "Exposed", "Unconscious", "Deceased", "Tired", "Confused", "Infected", "Rebelling", "Dying"
+    "Healthy", "Healthy", "Healthy", "Recovering", "Stressed",
+    "Tired", "Confused", "Resilient"
   ];
   
   // Available crew portrait numbers (01-012)
@@ -538,6 +367,31 @@ function initializeCrew() {
       background: background,
       status: status
     });
+  }
+}
+
+function hasCrewBackground(background) {
+  return (gameState.crew.members || []).some(member =>
+    member.background === background && member.status !== "Deceased"
+  );
+}
+
+function getCrewBonus(kind) {
+  switch (kind) {
+    case "repairDiscount":
+      return hasCrewBackground("Mechanic") || hasCrewBackground("Technician") ? 0.10 : 0;
+    case "medicalDiscount":
+      return hasCrewBackground("Medic") ? 0.10 : 0;
+    case "travelSpeed":
+      return hasCrewBackground("Navigator") ? 0.05 : 0;
+    case "scanRange":
+      return hasCrewBackground("Researcher") ? 0.10 : 0;
+    case "tradeDiscount":
+      return hasCrewBackground("Negotiator") ? 0.10 : 0;
+    case "prospecting":
+      return hasCrewBackground("Prospector") ? 0.15 : 0;
+    default:
+      return 0;
   }
 }
 
@@ -913,113 +767,79 @@ function getSceneImagePath(sceneId, locationId, locationType) {
     sceneName = "interior_admin";
   }
   
-  // Special handling for outposts: use subfolder structure with randomized mapping
+  // Outposts: subfolder structure with randomized image set mapping.
   if (locationType === "outpost") {
     const outpostSceneMap = {
       OUTPOST_EXTERIOR: "arrival",
       OUTPOST_INTERIOR: "interior",
       OUTPOST_MECHANIC: "interior",
       OUTPOST_RUMOR: "interior",
-      INTERIOR_MARKET: "interior"
+      INTERIOR_MARKET: "interior",
     };
     if (outpostSceneMap[sceneId]) {
       sceneName = outpostSceneMap[sceneId];
     }
-    // Normalize locationId: "outpost-0-a" -> "outpost-0"
-    const baseId = locationId.replace(/-[a-d]$/, ""); // Remove instance suffix
-    
-    // Get randomized image set for this outpost base ID
-    if (gameState.travel.outpostImageMapping && gameState.travel.outpostImageMapping[baseId]) {
-      const imageSetId = gameState.travel.outpostImageMapping[baseId];
-      return `assets/scenes/outposts/${imageSetId}/${sceneName}.png`;
-    }
-    
-    // Fallback: if mapping not initialized, use outpost-01 (the only one with images currently)
-    return `assets/scenes/outposts/outpost-01/${sceneName}.png`;
+    const baseId = locationId.replace(/-[a-d]$/, "");
+    const imageSetId =
+      (gameState.travel.outpostImageMapping && gameState.travel.outpostImageMapping[baseId]) ||
+      "outpost-01";
+    return outpostImage(imageSetId, sceneName);
   }
-  
-  // Special handling for asteroids: use randomized mapping
+
+  // Asteroids: randomized arrival image, shared surface pool.
   if (locationType === "asteroid") {
-    // Get randomized image number for this asteroid
-    if (gameState.travel.asteroidImageMapping && gameState.travel.asteroidImageMapping[locationId]) {
-      const imageNumber = gameState.travel.asteroidImageMapping[locationId];
-      // Arrival images are now in the arrival/ subfolder
-      if (sceneName === "arrival") {
-        return `assets/scenes/asteroids/arrival/asteroid_arrival_${imageNumber}.png`;
-      }
-      if (sceneName === "explore") {
-        return getAsteroidSurfaceImage(locationId);
-      }
-      // EXTERIOR scenes use surface images
-      if (sceneName === "exterior") {
-        return getAsteroidSurfaceImage(locationId);
-      }
-      // Other scenes use the old format (if they exist)
-      return `assets/scenes/asteroids/asteroid-${imageNumber}_${sceneName}.png`;
-    }
-    // Fallback: use default format if mapping not initialized
+    const imageNumber =
+      (gameState.travel.asteroidImageMapping && gameState.travel.asteroidImageMapping[locationId]) ||
+      "01";
     if (sceneName === "arrival") {
-      return `assets/scenes/asteroids/arrival/asteroid_arrival_01.png`;
+      return asteroidArrivalImage(imageNumber);
     }
-    if (sceneName === "explore") {
+    if (sceneName === "explore" || sceneName === "exterior") {
       return getAsteroidSurfaceImage(locationId);
     }
-    if (sceneName === "exterior") {
-      return getAsteroidSurfaceImage(locationId);
-    }
-    return `assets/scenes/asteroids/${sceneName}-${locationId}.jpg`;
+    // Other scenes (rare) use the legacy per-asteroid pattern.
+    return `assets/scenes/asteroids/asteroid-${imageNumber}_${sceneName}.png`;
   }
-  
-  // Special handling for ships: use randomized mapping
+
+  // Ships: randomized image set per ship.
   if (locationType === "ship") {
-    // Get randomized image number for this ship
-    if (gameState.travel.shipImageMapping && gameState.travel.shipImageMapping[locationId]) {
-      const imageNumber = gameState.travel.shipImageMapping[locationId];
-      return `assets/scenes/ships/ships-${imageNumber}_${sceneName}.png`;
+    const imageNumber =
+      (gameState.travel.shipImageMapping && gameState.travel.shipImageMapping[locationId]) || null;
+    if (imageNumber !== null) {
+      return shipImage(imageNumber, sceneName);
     }
-    // Fallback: use default format if mapping not initialized
     return `assets/scenes/ships/${sceneName}-${locationId}.jpg`;
   }
-  
-  // Default format for other location types (stations, etc.)
+
+  // Stations and any other location type: <type>s/<scene>-<id>.jpg.
+  if (locationType === "station") {
+    return stationImage(sceneName, locationId);
+  }
   const folderName = `${locationType}s`;
   return `assets/scenes/${folderName}/${sceneName}-${locationId}.jpg`;
 }
 
 /**
- * Get asteroid surface image (cached per asteroid)
- * @param {string} asteroidId Asteroid ID
- * @returns {string} Surface image path
+ * Get asteroid surface image (cached per asteroid).
+ * Path generation lives in the asset manifest; we just memoize the
+ * random index per asteroid id so the same asteroid always shows the
+ * same surface during a playthrough.
+ * @param {string} asteroidId
+ * @returns {string}
  */
 function getAsteroidSurfaceImage(asteroidId) {
-  // Check if we already have a cached surface image for this asteroid
   if (gameState.travel.asteroidSurfaceImageCache && gameState.travel.asteroidSurfaceImageCache[asteroidId]) {
     return gameState.travel.asteroidSurfaceImageCache[asteroidId];
   }
-  
-  // Available surface images: 01 through 23
-  // Files use 2 digits for 1-9 (01-09) and 3 digits for 10-23 (010-023)
-  const surfaceNumbers = [];
-  for (let i = 1; i <= 23; i++) {
-    if (i < 10) {
-      surfaceNumbers.push(String(i).padStart(2, '0')); // 01-09
-    } else {
-      surfaceNumbers.push(String(i).padStart(3, '0')); // 010-023
-    }
-  }
-  
-  // Pick a random surface image
-  const randomIndex = Math.floor(Math.random() * surfaceNumbers.length);
-  const imageNumber = surfaceNumbers[randomIndex];
-  
-  const imagePath = `assets/scenes/asteroids/surface/midjourney_session/asteroid_surface_${imageNumber}.png`;
-  
-  // Cache it for this asteroid
+
+  const numbers = asteroidSurfaceNumbers();
+  const imageNumber = numbers[Math.floor(Math.random() * numbers.length)];
+  const imagePath = asteroidSurfaceImage(imageNumber);
+
   if (!gameState.travel.asteroidSurfaceImageCache) {
     gameState.travel.asteroidSurfaceImageCache = {};
   }
   gameState.travel.asteroidSurfaceImageCache[asteroidId] = imagePath;
-  
   return imagePath;
 }
 
@@ -1033,20 +853,10 @@ function getAsteroidSurfaceImage(asteroidId) {
  * @returns {string} Image path (same as ARRIVAL scene, or surface for arrived asteroids)
  */
 function getPreviewImagePath(locationId, locationType) {
-  // Special case: Earth uses the planet image
-  if (locationId === "earth" || locationType === "earth") {
-    return "assets/scenes/planets/earth.png";
-  }
-  
-  // Special case: Moon uses the planet image
-  if (locationId === "moon" || locationType === "moon") {
-    return "assets/scenes/planets/moon.png";
-  }
-  
-  // Special case: Mars uses the planet image
-  if (locationId === "mars" || locationType === "mars") {
-    return "assets/scenes/planets/mars-01.png";
-  }
+  // Planets: route through the asset manifest for one source of truth.
+  if (locationId === "earth" || locationType === "earth") return planetImage("earth");
+  if (locationId === "moon" || locationType === "moon") return planetImage("moon");
+  if (locationId === "mars" || locationType === "mars") return planetImage("mars");
   
   // Special case: Asteroids
   if (locationType === "asteroid") {
@@ -1480,6 +1290,40 @@ function createStationLocation(baseId, displayName, services) {
  * @type {Object<string, Location>}
  */
 const LOCATIONS = {
+  earth: {
+    id: "earth",
+    name: "EARTH LAUNCHPORT",
+    type: "earth",
+    scenes: {
+      ARRIVAL: {
+        image: null,
+        title: "Earth Launchport",
+        hotspots: [
+          {
+            shape: "rect",
+            x: 0.32,
+            y: 0.62,
+            w: 0.36,
+            h: 0.12,
+            label: "Begin Mars Run",
+            action: { type: "LEAVE_LOCATION" }
+          }
+        ]
+      }
+    }
+  },
+  mars: {
+    id: "mars",
+    name: "MARS APPROACH",
+    type: "mars",
+    scenes: {
+      ARRIVAL: {
+        image: null,
+        title: "Mars Approach",
+        hotspots: []
+      }
+    }
+  },
   "outpost-0": {
     id: "outpost-0",
     name: "OUTPOST 0",
@@ -1751,149 +1595,11 @@ const STATION_HUB_DEFS = {
  *  }
  * }}
  */
-const gameState = {
-  meta: {
-    tab: "TRAVEL",
-    travelView: "MAP", // Legacy - kept for compatibility, but use currentSceneId instead
-    devSeedApplied: false, // Guard to prevent double-seeding on initGame() re-runs
-  },
-  stats: {
-    lifeSupport: 100, // Full life support (30 days at 3.333% per day)
-    hull: 100, // Mirror of shipIntegrity (kept in sync via js/hull.js)
-    shipIntegrity: 100, // Canonical ship integrity 0–100
-    credits: 1000,
-    day: 1,
-    deadline: 300,
-  },
-  travel: {
-    currentLocationId: "earth",
-    currentSceneId: "MAP", // Current scene: "MAP" | "ARRIVAL" | "EXTERIOR" | "MERCHANT" | etc.
-    selectedDestinationId: null,
-    selectedLocationId: null, // Location clicked/selected to show in HUD
-    hoveredNodeId: null,
-    lastResolutionText: null,
-    mapZoomLevel: 1, // Discrete zoom level: 1 (farthest) to 7 (closest) - for snap buttons
-    mapZoomFine: 1.0, // Fine-tuning multiplier (0.8 to 1.2) for pinch zoom
-    mapZoomContinuous: 1.2, // Continuous zoom value for fluid pinch zoom (1.2 to 12.0)
-    useContinuousZoom: false, // Whether to use continuous zoom (pinch) or discrete (snap)
-    mapPanX: 0, // pan offset in normalized coordinates
-    mapPanY: 0, // pan offset in normalized coordinates
-    isPanning: false, // whether user is currently panning
-    hasPanned: false, // whether user actually moved the mouse while panning (to distinguish click from drag)
-    panStartX: 0, // pan start screen position
-    panStartY: 0,
-    panStartPanX: 0, // pan offset when panning started
-    panStartPanY: 0,
-    isWaiting: false, // whether time is currently advancing continuously
-    waitIntervalId: null, // interval ID for continuous time passage
-    isTraveling: false, // whether ship is currently traveling
-    travelProgress: 0, // 0 to 1, progress along travel path
-    travelStartLocationId: null, // starting location for current travel
-    travelDestinationId: null, // destination for current travel
-    travelTotalDays: 0, // total days for current travel
-    travelStartTime: null, // timestamp when travel started
-    travelStartDay: 0, // day when travel started
-    travelAnimationId: null, // animation frame ID for travel animation
-    lockedGhostPosition: null, // locked ghost position when travel starts {x, y, angle, ring}
-    animationLoopId: null, // animation frame ID for continuous render loop
-    outpostImageMapping: null, // Random mapping of outpost base IDs to image set IDs (e.g., {"outpost-0": "outpost-01", "outpost-1": "outpost-03"})
-    asteroidImageMapping: null, // Random mapping of asteroid IDs to image numbers (e.g., {"asteroid-0": "01", "asteroid-1": "03"})
-    asteroidSurfaceImageCache: {}, // Cache of surface images per asteroid (e.g., {"asteroid-0": "asteroid_surface_05.png"})
-    shipImageMapping: null, // Random mapping of ship IDs to image numbers (e.g., {"ship-0": "010", "ship-1": "015"})
-    scannedNodes: new Set(), // Set of asteroid and ship node IDs that have been basic scanned and are visible
-    deepScannedNodes: new Set(), // Set of node IDs that have been deep scanned (shows probabilistic data)
-    clearedAsteroids: new Set(), // Set of asteroid IDs that have been fully explored (no more exploration available)
-    discoveredNodes: new Set(), // All nodes discovered by scan (asteroids, ships, and station instances)
-    revealedNodes: new Set(), // Outposts that have been revealed (initially just nearest ones)
-    nextStationBaseId: null, // Next station base ID in route (e.g., "station-01")
-    broadcastStationInstanceId: null, // The nearest instance of nextStationBaseId that should be shown as guidance
-    scanMode: "scan", // "scan" or "deepScan" - determines button text and what information is shown
-    scanPulse: {
-      isActive: false, // Whether scan pulse animation is currently active
-      startTime: null, // Timestamp when scan started
-      duration: 1000, // Duration of scan pulse in milliseconds (1 second)
-      maxRadius: 1.0, // Maximum scan radius in ring units (1.0 for basic, 0.5 for deep)
-      centerRing: null, // Ring position of scan center
-      centerAngle: null, // Angle position of scan center
-      isDeepScan: false, // Whether this is a deep scan
-    },
-    scannerGlitchDays: 0, // Days remaining with scanner glitch
-    attention: 0, // Attention level (increases pirate/mugging odds)
-    generalStoreMode: null, // Current general store mode: null, "buy", or "sell"
-    generalStoreCart: {}, // Cart state: { itemId: quantity, ... }
-    generalStoreCartTotal: 0, // Computed cart total in credits
-    generalStoreSellSelected: {}, // Sell selection: { artifactId: count, ... } - count of how many selected per type
-    generalStoreSellPayout: 0, // Computed sell payout total in credits
-    traderMerchantActive: false, // Whether trader merchant is currently open
-    traderMerchantCart: {}, // Trader cart state: { itemId: quantity, ... }
-    traderMerchantCartTotal: 0, // Computed trader cart total in credits
-    traderMerchantCapsByAsteroid: {}, // { asteroidId: { itemId: cap } }
-    traderMerchantPurchasedByAsteroid: {}, // { asteroidId: { itemId: qtyPurchased } }
-    returnSceneId: null, // Scene to return to when leaving nested scenes (hub/services/merchants)
-    stationHubPanelId: null, // Current station hub panel when in HUB scene
-    dockyardMode: null, // Dockyard tab: null | "repair" | "parts"
-    dockyardSelectionId: null, // Selected repair option id
-    outpostDockyardMode: null, // Outpost repair tab: null | "repair" | "parts"
-    outpostDockyardSelectionId: null, // Selected outpost repair option id
-    outpostDockyardMessage: null, // Outpost mechanic feedback message
-    clinicMode: null, // Clinic tab: null | "treat" | "pharmacy"
-    clinicSelectedMemberId: null, // Selected crew member id
-    clinicSelectedTreatmentId: null, // Selected treatment id
-    cantinaUI: { tab: "order", selectedOrderId: null, activeRumor: null }, // Cantina UI state
-    serviceOverlay: null, // "dockyard" | "clinic" | "cantina" | "admin" | null
-    hintTargetAsteroidId: null, // Asteroid hint target from rumors
-    lastRumorText: null, // Last rumor text (debug/log clarity)
-    activeRumorAsteroidIds: new Set(), // Pinned rumor highlights from RUMORS tab
-    completedRumorAsteroidIds: new Set(), // Rumor targets already visited
-    logView: "LOG", // "LOG" or "RUMORS"
-    rumoredNodes: new Set(), // Nodes flagged by outpost rumor kiosk
-    outpostRumors: {}, // Cached rumors per outpost baseId
-    outpostRumorMessage: null, // Last rumor kiosk message
-    outpostRumorSelectedId: null, // Selected rumor id
-    outpostRumorPendingId: null, // Deprecated: single pending rumor selection
-    outpostRumorPendingIds: new Set(), // Pending rumor selections for checkout
-    landingFlavorText: null, // Temporary landing flavor text for arrival event
-    activeEvent: null, // Active event: { phase: "PROMPT"|"OUTCOME", title, body, options, outcomeText, image }
-    isEventActive: false, // Derived: activeEvent != null
-    activeContact: null, // Current asteroid contact staging state
-  },
-  crew: {
-    members: [], // Array of crew member objects
-  },
-  inventory: {
-    supplies: {}, // Supplies: { "air_canister_s": { id: "air_canister_s", qty: 0 }, ... }
-    parts: {}, // Ship parts: { "part-01": 0, "part-02": 0, ... }
-    artifacts: [], // Artifacts: Array of artifact instances
-  },
-  log: {
-    entries: [], // Array of log entries
-    maxEntries: 200, // Maximum number of entries
-    landingDraft: null // Current landing draft being built
-  },
-  ship: {
-    integrity: 100, // Mirror of stats.shipIntegrity (see js/hull.js)
-    subsystems: {
-      STRUCTURAL: {
-        damage: 0, // Damage amount (0-100)
-        flavorText: "" // Descriptive text about damage cause
-      },
-      ELECTRICAL: {
-        damage: 0,
-        flavorText: ""
-      },
-      LIFE_SUPPORT: {
-        damage: 0,
-        flavorText: ""
-      }
-    },
-    upgrades: {
-      scanner: 0, // Tier level (0-2)
-      engine: 0, // Tier level (0-2)
-      landingAssist1: false, // Future landing damage reduction upgrade (+1)
-      landingAssist2: false // Future landing damage reduction upgrade (+2)
-    }
-  },
-};
+// Initial gameState shape lives in js/state/initialState.js. That file
+// also documents the conceptual slices inside `gameState.travel`
+// (navigation, mapCamera, timeFlow, discovery, commerce, services,
+// rumors, events).
+const gameState = createInitialState();
 
 // ---------------------------
 // Supply Definitions
@@ -3391,59 +3097,167 @@ function setTab(tab) {
       el.actionWait.classList.remove("is-active");
     }
   }
+
+  // If we're leaving the TRAVEL tab while a journey is in progress, pause
+  // the travel animation so time doesn't advance silently in the background.
+  // The animation resumes naturally next time TRAVEL is selected via render()
+  // → animation loop logic; we just stop the rAF chain here.
+  if (
+    tab !== "TRAVEL" &&
+    gameState.travel.isTraveling &&
+    gameState.travel.travelAnimationId !== null
+  ) {
+    cancelAnimationFrame(gameState.travel.travelAnimationId);
+    gameState.travel.travelAnimationId = null;
+  }
+
   gameState.meta.tab = tab;
   render();
 }
 
 /**
  * Advance time by the specified number of days.
- * This is the ONLY function that should modify gameState.stats.day or reduce life support.
- * All time-consuming actions must call this function.
- * 
- * @param {number} days Number of days to advance
- * @param {number} lifeSupportMultiplier Multiplier for life support drain (default 1.0)
+ *
+ * Single writer for `gameState.stats.day` and life support drain. Forwards
+ * to the implementation in js/time.js once it has been wired up; until
+ * then it falls back to a minimal in-place implementation so module-init
+ * code (dev seeding, etc.) keeps working.
+ *
+ * @param {number} days
+ * @param {number} [lifeSupportMultiplier=1]
  */
 function advanceDays(days, lifeSupportMultiplier = 1) {
-  const d = Math.max(0, Math.floor(days));
-  if (d === 0) return; // No-op if zero or negative
-  
-  // Debug logging (can be removed later)
-  const caller = new Error().stack?.split('\n')[2]?.trim() || 'unknown';
-  debugLog(`[advanceDays] +${d} days | Called from: ${caller} | Day: ${gameState.stats.day} → ${gameState.stats.day + d} | Life support: ${gameState.stats.lifeSupport.toFixed(1)}%`);
-  
-  // 1. Increment day
-  gameState.stats.day += d;
-  
-  // 2. Reduce life support (3.333% per day, 30 days total = 100%)
-  const drainMultiplier = Math.max(0, Number(lifeSupportMultiplier) || 0);
-  const lifeSupportDrain = d * (100 / 30) * drainMultiplier;
-  const lifeSupportBefore = gameState.stats.lifeSupport;
-  gameState.stats.lifeSupport = Math.max(0, gameState.stats.lifeSupport - lifeSupportDrain);
-  
-  // 3. Clamp values (already done above with Math.max, but being explicit)
-  if (gameState.stats.lifeSupport <= 0) {
-    console.warn(`[advanceDays] Life support depleted! Day ${gameState.stats.day}`);
-    // TODO: Trigger game over state
+  if (isRunOver()) return;
+  if (typeof _advanceDaysImpl === "function") {
+    _advanceDaysImpl(days, lifeSupportMultiplier);
+    return;
   }
-  
-  // 4. Call per-day hooks (even if stubbed)
-  processArtifactCarryRisks(d);
-  processCrewDegradation(d);
-  
-  // Debug logging for life support change
-  if (lifeSupportBefore !== gameState.stats.lifeSupport) {
-    debugLog(`[advanceDays] Life support: ${lifeSupportBefore.toFixed(1)}% → ${gameState.stats.lifeSupport.toFixed(1)}% (drained ${lifeSupportDrain.toFixed(1)}%)`);
+  const d = Math.max(0, Math.floor(days));
+  if (d === 0) return;
+  gameState.stats.day += d;
+  const drain = (100 / 30) * Math.max(0, Number(lifeSupportMultiplier) || 0) * d;
+  gameState.stats.lifeSupport = Math.max(0, gameState.stats.lifeSupport - drain);
+}
+
+/** Wired up at boot via createAdvanceDays(...) — see initGame(). */
+let _advanceDaysImpl = null;
+
+function isRunOver() {
+  return gameState.meta.runStatus === "WON" || gameState.meta.runStatus === "LOST";
+}
+
+function stopContinuousActions() {
+  if (gameState.travel.waitIntervalId !== null) {
+    clearInterval(gameState.travel.waitIntervalId);
+    gameState.travel.waitIntervalId = null;
+  }
+  gameState.travel.isWaiting = false;
+  if (gameState.travel.travelAnimationId !== null) {
+    cancelAnimationFrame(gameState.travel.travelAnimationId);
+    gameState.travel.travelAnimationId = null;
+  }
+  gameState.travel.isTraveling = false;
+  stopAnimationLoop();
+}
+
+function buildRunSummary(status, reason) {
+  const livingCrew = (gameState.crew.members || []).filter(m => m.status !== "Deceased").length;
+  const artifacts = gameState.inventory.artifacts.length;
+  const integrity = Math.round(gameState.stats.shipIntegrity ?? gameState.stats.hull ?? 0);
+  return `${status === "WON" ? "MISSION COMPLETE" : "MISSION FAILED"} — ${reason}
+Day ${gameState.stats.day}/${gameState.stats.deadline}. Ship integrity ${integrity}%. Life support ${Math.round(gameState.stats.lifeSupport)}%. Crew alive ${livingCrew}/${gameState.crew.members.length}. Artifacts aboard ${artifacts}. Credits ${gameState.stats.credits}c.`;
+}
+
+function finishRun(status, reason) {
+  if (isRunOver()) return;
+  gameState.meta.runStatus = status;
+  gameState.meta.endReason = reason;
+  gameState.meta.endSummary = buildRunSummary(status, reason);
+  stopContinuousActions();
+  logAdd(status === "WON" ? "VICTORY" : "GAME_OVER", gameState.meta.endSummary, { reason });
+  startEvent({
+    phase: "OUTCOME",
+    title: status === "WON" ? "MARS ORBIT ACHIEVED" : "RUN ENDED",
+    outcomeText: gameState.meta.endSummary,
+    options: ["", "", ""],
+    onContinue: () => {
+      // Keep the run ended and leave the summary visible in the log.
+      endEvent();
+      gameState.meta.tab = "LOG";
+      render();
+    }
+  });
+}
+
+function checkEndConditions() {
+  if (isRunOver()) return;
+  if (gameState.stats.lifeSupport <= 0) {
+    finishRun("LOST", "Life support collapsed before Mars.");
+    return;
+  }
+  if ((gameState.stats.shipIntegrity ?? gameState.stats.hull ?? 0) <= 0) {
+    finishRun("LOST", "The ship broke apart under accumulated damage.");
+    return;
+  }
+  if (gameState.stats.day > gameState.stats.deadline && gameState.travel.currentLocationId !== "mars") {
+    finishRun("LOST", "The Mars window closed before you arrived.");
   }
 }
 
+function getLifeSupportDrainMultiplier() {
+  const damage = gameState.ship.subsystems?.LIFE_SUPPORT?.damage || 0;
+  // A fully damaged life-support subsystem drains 75% faster.
+  return 1 + (damage / 100) * 0.75;
+}
+
 /**
- * Process crew degradation per day (stub for future implementation)
+ * Process daily crew/system degradation.
  * @param {number} days Number of days to process
  */
 function processCrewDegradation(days) {
-  // Stub: Future implementation will handle crew status changes over time
-  // This could include: health degradation, morale changes, condition progression, etc.
-  // For now, this is a placeholder that does nothing
+  if (gameState.travel.scannerGlitchDays > 0) {
+    gameState.travel.scannerGlitchDays = Math.max(0, gameState.travel.scannerGlitchDays - days);
+  }
+
+  // Lightweight recurring travel events: low-frequency pressure that uses
+  // existing systems without interrupting the player every few days.
+  if (gameState.meta.tab === "TRAVEL" && gameState.travel.currentSceneId === "MAP" && Math.random() < Math.min(0.18, days * 0.025)) {
+    const roll = Math.random();
+    if (roll < 0.34) {
+      const damage = rollInt(2, 6);
+      applyShipDamage(damage, "Micrometeor shower");
+      logAdd("TRAVEL_EVENT", `Day ${gameState.stats.day}: Micrometeor grit scored the hull (-${damage}% integrity).`, {});
+    } else if (roll < 0.67) {
+      gameState.travel.scannerGlitchDays = Math.max(gameState.travel.scannerGlitchDays, 1);
+      logAdd("TRAVEL_EVENT", `Day ${gameState.stats.day}: Solar interference will make the next scan unreliable.`, {});
+    } else if (gameState.crew.members.length > 0) {
+      const member = gameState.crew.members[Math.floor(Math.random() * gameState.crew.members.length)];
+      if (member.status !== "Deceased" && member.status !== "Resilient") {
+        member.status = "Stressed";
+        logAdd("CREW", `Day ${gameState.stats.day}: A cabin argument left ${member.name} stressed.`, { crewId: member.id });
+      }
+    }
+  }
+
+  const pressure = Math.max(0, days);
+  const lifeCritical = gameState.stats.lifeSupport <= 20;
+  const hullCritical = (gameState.stats.shipIntegrity ?? gameState.stats.hull ?? 100) <= 30;
+  if (!lifeCritical && !hullCritical) return;
+
+  const vulnerable = (gameState.crew.members || []).filter(m =>
+    !["Deceased", "Recovering", "Resilient"].includes(m.status)
+  );
+  if (vulnerable.length === 0) return;
+
+  const chance = Math.min(0.35, pressure * (lifeCritical ? 0.04 : 0.02) + (hullCritical ? 0.03 : 0));
+  if (Math.random() < chance) {
+    const member = vulnerable[Math.floor(Math.random() * vulnerable.length)];
+    const nextStatus = lifeCritical ? "Exposed" : "Stressed";
+    member.status = nextStatus;
+    logAdd("CREW", `Day ${gameState.stats.day}: ${member.name} became ${nextStatus.toLowerCase()} under shipboard pressure.`, {
+      crewId: member.id
+    });
+  }
 }
 
 /**
@@ -3477,6 +3291,7 @@ function calculateTravelTimeOrbital(fromId, toId) {
   // This ensures consistent results regardless of starting position
   const maxIterations = 20; // Reduced iterations per sample for performance
   const maxDays = 100; // Maximum reasonable travel time (stations should be closer)
+  const effectiveShipSpeed = SHIP_SPEED * getShipSpeedMultiplier();
   
   let bestTime = Infinity;
   let bestDistance = Infinity;
@@ -3497,7 +3312,7 @@ function calculateTravelTimeOrbital(fromId, toId) {
       const dx = toPos.x - fromPos.x;
       const dy = toPos.y - fromPos.y;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      const requiredTime = Math.ceil(distance / SHIP_SPEED);
+      const requiredTime = Math.ceil(distance / effectiveShipSpeed);
       
       // If converged (within 1 day), check if this is the best solution
       if (Math.abs(requiredTime - t) <= 1) {
@@ -3520,7 +3335,7 @@ function calculateTravelTimeOrbital(fromId, toId) {
   }
   
   // Fallback: use current distance calculation (should rarely happen)
-  const fallbackTime = Math.ceil(initialDistance / SHIP_SPEED);
+  const fallbackTime = Math.ceil(initialDistance / effectiveShipSpeed);
   return Math.max(1, Math.min(fallbackTime, maxDays));
 }
 
@@ -3683,7 +3498,7 @@ function getNodeAt(screenX, screenY) {
     zoom = gameState.travel.mapZoomContinuous;
   } else {
     // Zoom scale factors for each level (1-7) - Level 1 starts at previous level 3
-    const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
+    const zoomScales = ZOOM_SCALES;
     const baseZoom = zoomScales[zoomLevel] || 1.2;
     zoom = baseZoom * gameState.travel.mapZoomFine; // Apply fine-tuning
   }
@@ -3915,7 +3730,7 @@ function screenToWorldCoords(screenX, screenY) {
   if (gameState.travel.useContinuousZoom) {
     zoom = gameState.travel.mapZoomContinuous;
   } else {
-    const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
+    const zoomScales = ZOOM_SCALES;
     const baseZoom = zoomScales[zoomLevel] || 1.2;
     zoom = baseZoom * gameState.travel.mapZoomFine;
   }
@@ -4036,7 +3851,7 @@ function drawMap() {
     zoom = gameState.travel.mapZoomContinuous;
   } else {
     // Zoom scale factors for each level (1-7) - Level 1 starts at previous level 3
-    const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
+    const zoomScales = ZOOM_SCALES;
     const baseZoom = zoomScales[zoomLevel] || 1.2;
     zoom = baseZoom * gameState.travel.mapZoomFine; // Apply fine-tuning
   }
@@ -4126,7 +3941,7 @@ function drawMap() {
 
   // Draw scan pulse animation (sonar effect)
   if (gameState.travel.scanPulse.isActive && gameState.travel.scanPulse.startTime !== null) {
-    const now = Date.now();
+    const now = perfNow();
     const elapsed = now - gameState.travel.scanPulse.startTime;
     const progress = Math.min(1, elapsed / gameState.travel.scanPulse.duration);
     
@@ -4244,9 +4059,9 @@ function drawMap() {
         }
       }
       
-      // Re-render once after scan completes to update UI with any new scan data
-      // This prevents flickering during the animation (only render once at the end)
-      render();
+      // Re-render once after scan completes to update UI with any new scan data.
+      // Use the scheduler so the canvas draw path doesn't trigger a synchronous DOM pass.
+      scheduleRender();
       
       // Final pass to ensure all objects within max radius are scanned/discovered
       // Include asteroids, ships, stations, and outposts
@@ -4751,7 +4566,7 @@ function drawMap() {
       
       // Always pulse scale animation for current location (10% scale up and down)
       // This makes it easy to find your current location even when clicking around
-        const pulseTime = Date.now() / 1000; // Time in seconds
+        const pulseTime = perfNow() / 1000; // Time in seconds
         const pulseScale = 1.0 + Math.sin(pulseTime * Math.PI * 2) * 0.1; // ±10% variation
         nodeSize = nodeSize * pulseScale;
     }
@@ -4829,7 +4644,7 @@ function drawMap() {
 
     // Draw pulsing ring around current location (always visible)
     if (isCurrent) {
-      const pulseTime = Date.now() / 1000; // Time in seconds
+      const pulseTime = perfNow() / 1000; // Time in seconds
       // Use the base node size (before pulse scale) for consistent ring calculation
       const pulseRadius = baseNodeSize * (1.5 + Math.sin(pulseTime * Math.PI * 2) * 0.3); // Pulse between 1.2x and 1.8x base size
       const pulseOpacity = 0.4 + Math.sin(pulseTime * Math.PI * 2) * 0.3; // Pulse opacity between 0.1 and 0.7
@@ -4843,7 +4658,7 @@ function drawMap() {
     
     // Draw pulsing ring around selected location (if different from current)
     if (isSelected && !isCurrent) {
-      const pulseTime = Date.now() / 1000; // Time in seconds
+      const pulseTime = perfNow() / 1000; // Time in seconds
       const pulseRadius = nodeSize * (1.5 + Math.sin(pulseTime * Math.PI * 2) * 0.3); // Pulse between 1.2x and 1.8x node size
       const pulseOpacity = 0.3 + Math.sin(pulseTime * Math.PI * 2) * 0.2; // Pulse opacity between 0.1 and 0.5
       
@@ -4856,7 +4671,7 @@ function drawMap() {
     
     // Draw pulsing ring around rumor target
     if (isRumorTarget) {
-      const pulseTime = Date.now() / 1000;
+      const pulseTime = perfNow() / 1000;
       const pulseRadius = baseNodeSize * (1.4 + Math.sin(pulseTime * Math.PI * 2) * 0.15);
       const pulseOpacity = 0.25 + Math.sin(pulseTime * Math.PI * 2) * 0.15;
       ctx.strokeStyle = `rgba(237, 17, 164, ${pulseOpacity})`;
@@ -4956,7 +4771,7 @@ function drawMap() {
         }
         
         // Ghost pulse animation: pulse once per second and fade out
-        const pulseTime = Date.now() / 1000; // Time in seconds
+        const pulseTime = perfNow() / 1000; // Time in seconds
         const pulsePhase = (pulseTime % 1.0); // 0 to 1 over 1 second
         // Fade out: opacity goes from 1.0 to 0.3 over the pulse cycle
         const pulseOpacity = 0.3 + (1.0 - pulsePhase) * 0.7; // Fade from 1.0 to 0.3
@@ -5062,7 +4877,7 @@ function drawMap() {
       }
       
       // Ghost pulse animation: pulse once per second and fade out
-      const pulseTime = Date.now() / 1000; // Time in seconds
+      const pulseTime = perfNow() / 1000; // Time in seconds
       const pulsePhase = (pulseTime % 1.0); // 0 to 1 over 1 second
       // Fade out: opacity goes from 1.0 to 0.3 over the pulse cycle
       const pulseOpacity = 0.3 + (1.0 - pulsePhase) * 0.7; // Fade from 1.0 to 0.3
@@ -6202,34 +6017,13 @@ function stopAnimationLoop() {
 }
 
 /**
- * Get supply image path for a supply ID
- * @param {string} supplyId Supply ID
- * @returns {string|null} Image path or null if no image available
+ * Get supply image path for a supply ID.
+ * Delegates to the centralized asset manifest.
+ * @param {string} supplyId
+ * @returns {string|null}
  */
 function getSupplyImagePath(supplyId) {
-  const imageMap = {
-    // Air canisters
-    "air_canister_s": "assets/items/supplies/air-canister_small.png",
-    "air_canister_m": "assets/items/supplies/air-canister_medium.png",
-    "air_canister_l": "assets/items/supplies/air-canister_large.png",
-    
-    // Life support refills
-    "life_refill_5": "assets/items/supplies/life-support_option-01.png",
-    "life_refill_10": "assets/items/supplies/life-support_option-01.png",
-    "life_refill_full": "assets/items/supplies/life-support_option-01.png",
-    
-    // Medical - general
-    "med_gel": "assets/items/supplies/med-kit_small.png",
-    "stimulant_kit": "assets/items/supplies/med-kit_medium.png",
-    "nutrient_rations": "assets/items/supplies/med-kit_small.png",
-    
-    // Medical - station only
-    "antibiotics": "assets/items/supplies/antibiotics_option-01.png",
-    "trauma_kit": "assets/items/supplies/med-kit_medium.png",
-    "sedative": "assets/items/supplies/syringe_option-01.png",
-  };
-  
-  return imageMap[supplyId] || null;
+  return supplyImage(supplyId);
 }
 
 /**
@@ -6476,6 +6270,9 @@ function findLocationData(locationId) {
     if (node.type === "ship") {
       return LOCATIONS["ship-0"] || null;
     }
+    if (node.type === "earth" || node.type === "moon" || node.type === "mars") {
+      return LOCATIONS[node.type] || null;
+    }
   }
   
   return null;
@@ -6515,7 +6312,8 @@ function getTraderInventory() {
       basePrice = def.basePrice;
     }
     
-    const traderPrice = Math.round(basePrice * 1.35);
+    const traderMarkup = 1.35 - getCrewBonus("tradeDiscount");
+    const traderPrice = Math.round(basePrice * traderMarkup);
     
     return {
       id: item.id,
@@ -7616,13 +7414,19 @@ function renderDockyard(locationId) {
   const integrity = Math.round(gameState.stats.hull);
   const credits = gameState.stats.credits || 0;
   const selectedId = gameState.travel.dockyardSelectionId;
+  const repairDiscount = getCrewBonus("repairDiscount");
+  const priceWithRepairDiscount = (price) => Math.max(1, Math.round(price * (1 - repairDiscount)));
   const repairOptions = [
-    { id: "patch", label: "Patch Hull", hull: 10, days: 1, cost: 40 },
-    { id: "weld", label: "Full Weld", hull: 25, days: 2, cost: 90 },
-    { id: "overhaul", label: "Overhaul", hull: 50, days: 3, cost: 170 }
+    { id: "patch", label: "Patch Hull", hull: 10, days: 1, cost: priceWithRepairDiscount(40) },
+    { id: "weld", label: "Full Weld", hull: 25, days: 2, cost: priceWithRepairDiscount(90) },
+    { id: "overhaul", label: "Overhaul", hull: 50, days: 3, cost: priceWithRepairDiscount(170) }
   ];
   const selected = repairOptions.find(opt => opt.id === selectedId);
-  const timeCostText = selected ? `${selected.days}d` : "--";
+  const partOptions = Object.values(SHIP_PART_DEFS).filter(part =>
+    part.shopTier === "STATION" || part.shopTier === "BOTH"
+  );
+  const selectedPart = partOptions.find(part => part.id === selectedId);
+  const timeCostText = selected ? `${selected.days}d` : selectedPart ? "0d" : "--";
   infoStrip.textContent = `SHIP INTEGRITY: ${integrity}%   CREDITS: ${credits}c   TIME COST: ${timeCostText}`;
   dockyardContainer.appendChild(infoStrip);
   
@@ -7676,29 +7480,71 @@ function renderDockyard(locationId) {
     });
     contentArea.appendChild(list);
   } else {
-    const placeholder = document.createElement("div");
-    placeholder.textContent = "PARTS SHOP COMING SOON";
-    placeholder.style.cssText = `
-      font-family: 'Inter', sans-serif;
-      font-weight: 700;
-      font-size: 16px;
-      color: #ffffff;
-      text-align: center;
-      padding: 40px;
+    const list = document.createElement("div");
+    list.style.cssText = `
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      margin-top: 10px;
     `;
-    contentArea.appendChild(placeholder);
+    partOptions.forEach(part => {
+      const row = document.createElement("div");
+      row.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border: 2px solid #ffffff;
+        border-radius: 10px;
+        cursor: pointer;
+        background: ${selectedId === part.id ? "rgba(255,255,255,0.1)" : "transparent"};
+      `;
+      const owned = gameState.inventory.parts[part.id] || 0;
+      const left = document.createElement("div");
+      left.textContent = `${part.name} (owned ${owned})`;
+      left.style.cssText = "font-weight: 700; font-size: 16px; color: #ffffff;";
+      const right = document.createElement("div");
+      const partPrice = priceWithRepairDiscount(part.basePrice);
+      right.textContent = `${part.type === "UPGRADE" ? "Upgrade" : "+" + part.repairAmount}  ${partPrice}c`;
+      right.style.cssText = "font-weight: 700; font-size: 14px; color: #ffffff;";
+      row.appendChild(left);
+      row.appendChild(right);
+      row.addEventListener("click", () => {
+        gameState.travel.dockyardSelectionId = part.id;
+        renderDockyard(locationId);
+      });
+      list.appendChild(row);
+    });
+    contentArea.appendChild(list);
   }
   
   dockyardContainer.appendChild(contentArea);
   
   // Confirm button
   const confirm = document.createElement("button");
-  confirm.textContent = "CONFIRM REPAIR";
+  confirm.textContent = gameState.travel.dockyardMode === "parts" ? "BUY PART / UPGRADE" : "CONFIRM REPAIR";
   confirm.className = "merchant-confirm-button";
-  confirm.disabled = !selected;
-  confirm.style.opacity = selected ? "1" : "0.5";
-  confirm.style.cursor = selected ? "pointer" : "not-allowed";
+  const canConfirm = gameState.travel.dockyardMode === "parts" ? !!selectedPart : !!selected;
+  confirm.disabled = !canConfirm;
+  confirm.style.opacity = canConfirm ? "1" : "0.5";
+  confirm.style.cursor = canConfirm ? "pointer" : "not-allowed";
   confirm.addEventListener("click", () => {
+    if (!canConfirm) return;
+    if (selectedPart) {
+      const selectedPartPrice = priceWithRepairDiscount(selectedPart.basePrice);
+      if (credits < selectedPartPrice) {
+        message.textContent = "Insufficient credits.";
+        return;
+      }
+      gameState.stats.credits -= selectedPartPrice;
+      gameState.inventory.parts[selectedPart.id] = (gameState.inventory.parts[selectedPart.id] || 0) + 1;
+      logAdd("DOCKYARD", `Day ${gameState.stats.day}: Bought ${selectedPart.name}.`, { partId: selectedPart.id });
+      gameState.travel.dockyardSelectionId = null;
+      renderDockyard(locationId);
+      render();
+      return;
+    }
     if (!selected) return;
     if (credits < selected.cost) {
       message.textContent = "Insufficient credits.";
@@ -8227,6 +8073,7 @@ function renderOutpostRumorKiosk(locationId) {
       usedTargetIds.add(target.id);
       assignments.push({ rumor, target });
     }
+    const baseId = getBaseLocationId(locationId);
     assignments.forEach(({ rumor, target }) => {
       gameState.travel.outpostRumorSelectedId = rumor.id;
       const targetName = target.name || "a nearby rock";
@@ -8238,9 +8085,14 @@ function renderOutpostRumorKiosk(locationId) {
       } else if (rumor.kind === "resource") {
         rumorText = `A scavenger claims resources near ${targetName}.`;
       }
-      setRumorTarget(target.id, rumorText, "OUTPOST_RUMOR");
+      setRumorTarget(target.id, rumorText, "OUTPOST_RUMOR", {
+        id: rumor.id,
+        kind: rumor.kind,
+        isTrue: rumor.isTrue,
+        cost: rumor.cost,
+        source: baseId,
+      });
     });
-    const baseId = getBaseLocationId(locationId);
     if (gameState.travel.outpostRumors && gameState.travel.outpostRumors[baseId]) {
       gameState.travel.outpostRumors[baseId] = gameState.travel.outpostRumors[baseId]
         .filter((entry) => !gameState.travel.outpostRumorPendingIds.has(entry.id));
@@ -8352,14 +8204,41 @@ function selectRumorTargetFromCurrentLocation(excludeIds = new Set()) {
   return weighted[weighted.length - 1].node;
 }
 
-function setRumorTarget(targetId, rumorText, logType = "RUMOR") {
+function setRumorTarget(targetId, rumorText, logType = "RUMOR", rumorMeta = null) {
   gameState.travel.hintTargetAsteroidId = targetId;
   gameState.travel.lastRumorText = rumorText;
+  if (!gameState.travel.rumoredNodes) gameState.travel.rumoredNodes = new Set();
+  if (!gameState.travel.activeRumorAsteroidIds) gameState.travel.activeRumorAsteroidIds = new Set();
+  if (!gameState.travel.purchasedRumors) gameState.travel.purchasedRumors = {};
+  gameState.travel.rumoredNodes.add(targetId);
+  gameState.travel.activeRumorAsteroidIds.add(targetId);
   const targetNode = mapNodes.find(n => n.id === targetId);
   const targetName = targetNode ? targetNode.name : "a nearby rock";
+  if (rumorMeta) {
+    gameState.travel.purchasedRumors[targetId] = {
+      targetId,
+      targetName,
+      text: rumorText,
+      kind: rumorMeta.kind,
+      isTrue: rumorMeta.isTrue,
+      cost: rumorMeta.cost,
+      source: rumorMeta.source,
+      purchasedDay: gameState.stats.day,
+    };
+
+    // Make true rumors consequential by biasing the hidden asteroid truth.
+    // False rumors remain useful as map leads but do not change outcomes.
+    if (targetNode && rumorMeta.isTrue) {
+      generateAsteroidTruthValues(targetNode);
+      if (rumorMeta.kind === "artifact") targetNode.artifactTruth = true;
+      if (rumorMeta.kind === "resource") targetNode.resourcesTruth = true;
+      if (rumorMeta.kind === "credits") targetNode.creditCacheTruth = true;
+    }
+  }
   logAdd(logType, `Day ${gameState.stats.day}: ${rumorText}`, {
     targetId: targetId,
-    hintTargetAsteroidId: targetId
+    hintTargetAsteroidId: targetId,
+    rumor: rumorMeta || null,
   });
   return {
     targetId,
@@ -8476,6 +8355,8 @@ function renderClinic(locationId) {
     { id: "extended", label: "Extended Care", days: 2, cost: 100, result: "Healthy" },
     { id: "stabilize", label: "Stabilize Only", days: 1, cost: 25, result: null }
   ];
+  const medicalDiscount = getCrewBonus("medicalDiscount");
+  const medicalPrice = (price) => Math.max(1, Math.round(price * (1 - medicalDiscount)));
   const selectedTreatmentId = gameState.travel.clinicSelectedTreatmentId;
   const selectedTreatment = treatmentOptions.find(t => t.id === selectedTreatmentId) || null;
   
@@ -8500,17 +8381,46 @@ function renderClinic(locationId) {
   `;
   
   if (gameState.travel.clinicMode === "pharmacy") {
-    const placeholder = document.createElement("div");
-    placeholder.textContent = "PHARMACY COMING SOON";
-    placeholder.style.cssText = `
-      font-family: 'Inter', sans-serif;
-      font-weight: 700;
-      font-size: 16px;
-      color: #ffffff;
-      text-align: center;
-      padding: 40px;
+    const pharmacyItems = Object.values(SUPPLY_DEFS).filter(item =>
+      item.subtype === "MEDICAL" && (item.tier === "STATION" || item.tier === "BOTH")
+    );
+    const list = document.createElement("div");
+    list.style.cssText = `
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
     `;
-    contentArea.appendChild(placeholder);
+    pharmacyItems.forEach(item => {
+      const row = document.createElement("div");
+      const selected = selectedTreatmentId === item.id;
+      row.style.cssText = `
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 14px 18px;
+        border: 2px solid #ffffff;
+        border-radius: 10px;
+        cursor: pointer;
+        background: ${selected ? "rgba(255,255,255,0.1)" : "transparent"};
+      `;
+      const owned = gameState.inventory.supplies[item.id]?.qty || 0;
+      const left = document.createElement("div");
+      left.textContent = `${item.name} (owned ${owned})`;
+      left.style.cssText = "font-weight: 700; color: #ffffff;";
+      const right = document.createElement("div");
+      right.textContent = `${medicalPrice(item.basePrice)}c`;
+      right.style.cssText = "font-weight: 700; color: #ffffff;";
+      row.appendChild(left);
+      row.appendChild(right);
+      row.addEventListener("click", () => {
+        gameState.travel.clinicSelectedTreatmentId = item.id;
+        renderClinic(locationId);
+      });
+      list.appendChild(row);
+    });
+    contentArea.appendChild(list);
   } else {
     const list = document.createElement("div");
     list.style.cssText = `
@@ -8577,7 +8487,7 @@ function renderClinic(locationId) {
       left.textContent = option.label;
       left.style.cssText = "font-weight: 700; color: #ffffff;";
       const right = document.createElement("div");
-      right.textContent = `${option.days} day  ${option.cost}c`;
+      right.textContent = `${option.days} day  ${medicalPrice(option.cost)}c`;
       right.style.cssText = "font-weight: 700; color: #ffffff;";
       btn.appendChild(left);
       btn.appendChild(right);
@@ -8593,19 +8503,38 @@ function renderClinic(locationId) {
   clinicContainer.appendChild(contentArea);
   
   const confirm = document.createElement("button");
-  confirm.textContent = "CONFIRM TREATMENT";
+  confirm.textContent = gameState.travel.clinicMode === "pharmacy" ? "BUY MEDICAL SUPPLY" : "CONFIRM TREATMENT";
   confirm.className = "merchant-confirm-button";
-  const canConfirm = selectedMember && selectedTreatment && gameState.travel.clinicMode === "treat";
+  const selectedPharmacyItem = SUPPLY_DEFS[selectedTreatmentId];
+  const canConfirm = gameState.travel.clinicMode === "pharmacy"
+    ? !!selectedPharmacyItem
+    : selectedMember && selectedTreatment && gameState.travel.clinicMode === "treat";
   confirm.disabled = !canConfirm;
   confirm.style.opacity = canConfirm ? "1" : "0.5";
   confirm.style.cursor = canConfirm ? "pointer" : "not-allowed";
   confirm.addEventListener("click", () => {
     if (!canConfirm) return;
-    if (credits < selectedTreatment.cost) {
+    if (gameState.travel.clinicMode === "pharmacy") {
+      const itemPrice = medicalPrice(selectedPharmacyItem.basePrice);
+      if (credits < itemPrice) {
+        message.textContent = "Insufficient credits.";
+        return;
+      }
+      gameState.stats.credits -= itemPrice;
+      gameState.inventory.supplies[selectedPharmacyItem.id] = gameState.inventory.supplies[selectedPharmacyItem.id] || { id: selectedPharmacyItem.id, qty: 0 };
+      gameState.inventory.supplies[selectedPharmacyItem.id].qty += 1;
+      logAdd("CLINIC", `Day ${gameState.stats.day}: Bought ${selectedPharmacyItem.name}.`, { supplyId: selectedPharmacyItem.id });
+      gameState.travel.clinicSelectedTreatmentId = null;
+      renderClinic(locationId);
+      render();
+      return;
+    }
+    const treatmentCost = medicalPrice(selectedTreatment.cost);
+    if (credits < treatmentCost) {
       message.textContent = "Insufficient credits.";
       return;
     }
-    gameState.stats.credits -= selectedTreatment.cost;
+    gameState.stats.credits -= treatmentCost;
     advanceDays(selectedTreatment.days);
     if (selectedTreatment.result) {
       selectedMember.status = selectedTreatment.result;
@@ -8994,8 +8923,8 @@ function renderAdminOverlay(locationId) {
   tabs.appendChild(leaveBtn);
   adminContainer.appendChild(tabs);
   
-  const placeholder = document.createElement("div");
-  placeholder.style.cssText = `
+  const terminal = document.createElement("div");
+  terminal.style.cssText = `
     width: 100%;
     padding: 20px;
     margin-top: 20px;
@@ -9003,10 +8932,64 @@ function renderAdminOverlay(locationId) {
     border-radius: 10px;
     color: #ffffff;
     font-weight: 600;
-    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
   `;
-  placeholder.textContent = "ADMIN TERMINAL — SERVICES COMING SOON";
-  adminContainer.appendChild(placeholder);
+  const status = document.createElement("div");
+  status.textContent = `CREDITS: ${gameState.stats.credits}c | DAY ${gameState.stats.day}/${gameState.stats.deadline}`;
+  terminal.appendChild(status);
+
+  const services = [
+    {
+      label: "Buy Route Intel (75c)",
+      run: () => {
+        if (gameState.stats.credits < 75) return "Insufficient credits.";
+        gameState.stats.credits -= 75;
+        initializeRevealedNodes();
+        if (gameState.travel.broadcastStationInstanceId) {
+          gameState.travel.discoveredNodes.add(gameState.travel.broadcastStationInstanceId);
+          logAdd("ADMIN", `Day ${gameState.stats.day}: Purchased station route intel: ${gameState.travel.broadcastStationInstanceId}.`, {});
+          return `Broadcast station marked: ${gameState.travel.broadcastStationInstanceId}.`;
+        }
+        return "No new station intel available.";
+      }
+    },
+    {
+      label: "File Extension Request (+10 days, 120c)",
+      run: () => {
+        if (gameState.stats.credits < 120) return "Insufficient credits.";
+        gameState.stats.credits -= 120;
+        gameState.stats.deadline += 10;
+        logAdd("ADMIN", `Day ${gameState.stats.day}: Filed mission extension. Deadline now day ${gameState.stats.deadline}.`, {});
+        return `Deadline extended to day ${gameState.stats.deadline}.`;
+      }
+    },
+    {
+      label: "Sell Survey Data (+60c)",
+      run: () => {
+        const count = (gameState.travel.deepScannedNodes?.size || 0) + (gameState.travel.discoveredNodes?.size || 0);
+        if (count < 3) return "Need at least 3 scan records.";
+        gameState.stats.credits += 60;
+        logAdd("ADMIN", `Day ${gameState.stats.day}: Sold survey data for 60 credits.`, {});
+        return "Survey packet accepted. +60 credits.";
+      }
+    }
+  ];
+
+  services.forEach(service => {
+    const btn = document.createElement("button");
+    btn.className = "merchant-confirm-button";
+    btn.textContent = service.label;
+    btn.addEventListener("click", () => {
+      status.textContent = service.run();
+      renderHeader();
+      renderStats();
+    });
+    terminal.appendChild(btn);
+  });
+
+  adminContainer.appendChild(terminal);
   
   el.sceneOverlayLayer.appendChild(adminContainer);
 }
@@ -10774,9 +10757,151 @@ function handleAsteroidExplore(asteroidId) {
     };
     startEvent(eventData);
   } else {
-    // UNINHABITED TRACK: Roll outcome with artifact integration
-    handleAsteroidUninhabitedExplore(asteroidId);
+    showAsteroidSurveyChoices(asteroidId);
   }
+}
+
+function getActiveRumorForAsteroid(asteroidId) {
+  return gameState.travel.purchasedRumors?.[asteroidId] || null;
+}
+
+function markRumorResolved(asteroidId, resultText) {
+  const rumor = getActiveRumorForAsteroid(asteroidId);
+  if (!rumor) return;
+  gameState.travel.completedRumors[asteroidId] = {
+    ...rumor,
+    completedDay: gameState.stats.day,
+    resultText,
+  };
+  delete gameState.travel.purchasedRumors[asteroidId];
+  gameState.travel.activeRumorAsteroidIds?.delete(asteroidId);
+  gameState.travel.rumoredNodes?.delete(asteroidId);
+  gameState.travel.completedRumorAsteroidIds?.add(asteroidId);
+  logAdd("RUMOR_RESOLVED", `Day ${gameState.stats.day}: ${resultText}`, {
+    targetId: asteroidId,
+    rumorKind: rumor.kind,
+    isTrue: rumor.isTrue,
+  });
+}
+
+function grantAsteroidResources(asteroidId, mode = "quick") {
+  const node = mapNodes.find(n => n.id === asteroidId);
+  const rumor = getActiveRumorForAsteroid(asteroidId);
+  const hasResourceLead = rumor && rumor.isTrue && rumor.kind === "resource";
+  const hasCreditLead = rumor && rumor.isTrue && rumor.kind === "credits";
+  const resourcesLikely = node?.resourcesTruth === true || hasResourceLead || Math.random() < getCrewBonus("prospecting");
+  const rewards = [];
+
+  if (resourcesLikely) {
+    const airQty = mode === "drill" ? 2 : 1;
+    gameState.inventory.supplies.air_canister_m = gameState.inventory.supplies.air_canister_m || { id: "air_canister_m", qty: 0 };
+    gameState.inventory.supplies.air_canister_m.qty += airQty;
+    rewards.push(`${airQty} medium air canister${airQty > 1 ? "s" : ""}`);
+
+    if (mode !== "quick") {
+      const partId = mode === "drill" ? "repair_welding_kit" : "repair_emergency_kit";
+      gameState.inventory.parts[partId] = (gameState.inventory.parts[partId] || 0) + 1;
+      rewards.push(SHIP_PART_DEFS[partId].name);
+    }
+  }
+
+  if (hasCreditLead || (!resourcesLikely && Math.random() < 0.35)) {
+    const credits = hasCreditLead ? rollInt(120, 220) : rollInt(35, 85);
+    gameState.stats.credits += credits;
+    rewards.push(`${credits} credits`);
+  }
+
+  return rewards;
+}
+
+function makeAsteroidClearedContinue(asteroidId, resultText = null) {
+  return () => {
+    if (!gameState.travel.clearedAsteroids) {
+      gameState.travel.clearedAsteroids = new Set();
+    }
+    gameState.travel.clearedAsteroids.add(asteroidId);
+    if (resultText) {
+      markRumorResolved(asteroidId, resultText);
+    }
+    gameState.travel.currentSceneId = "MAP";
+    endEvent();
+    handleAsteroidLeave(asteroidId);
+  };
+}
+
+function showAsteroidSurveyChoices(asteroidId) {
+  const node = mapNodes.find(n => n.id === asteroidId);
+  if (!node) return;
+  const rumor = getActiveRumorForAsteroid(asteroidId);
+  const rumorLine = rumor
+    ? `\nRumor lead: ${rumor.isTrue ? "credible" : "questionable"} ${rumor.kind}.`
+    : "";
+  startEvent({
+    title: "SURFACE SURVEY",
+    body: `The rock is quiet. You can make a fast pass, spend time surveying carefully, or drill into promising seams.${rumorLine}`,
+    options: ["Quick Sweep", "Careful Survey (+1 day)", "Drill / Extract (+1 day, risk)"],
+    optionHandlers: [
+      () => runAsteroidSurvey(asteroidId, "quick"),
+      () => runAsteroidSurvey(asteroidId, "careful"),
+      () => runAsteroidSurvey(asteroidId, "drill"),
+    ]
+  });
+}
+
+function runAsteroidSurvey(asteroidId, mode) {
+  const node = mapNodes.find(n => n.id === asteroidId);
+  if (!node) return;
+  if (mode !== "quick") {
+    advanceDays(1);
+    if (isRunOver()) return;
+  }
+
+  const hazardChance = mode === "drill" ? 0.28 : mode === "careful" ? 0.08 : 0.14;
+  if (Math.random() < hazardChance) {
+    const damage = mode === "drill" ? rollInt(4, 10) : rollInt(2, 6);
+    applyShipDamage(damage, `${mode} asteroid survey on ${node.name}`);
+    if (isRunOver()) return;
+  }
+
+  if (node.artifactTruth === true && (mode !== "quick" || Math.random() < 0.55)) {
+    grantRandomArtifact("ASTEROID", asteroidId);
+    startEvent({
+      phase: "OUTCOME",
+      title: "ANOMALOUS FIND",
+      outcomeText: "A careful pass catches an impossible glint below the dust. You recover an artifact.",
+      options: ["", "", ""],
+      onContinue: makeAsteroidClearedContinue(asteroidId, "The rumor paid off with an artifact find.")
+    });
+    return;
+  }
+
+  const rewards = grantAsteroidResources(asteroidId, mode);
+  if (rewards.length > 0) {
+    const result = `Surveyed ${node.name} and recovered ${rewards.join(", ")}.`;
+    startEvent({
+      phase: "OUTCOME",
+      title: "USEFUL SALVAGE",
+      outcomeText: result,
+      options: ["", "", ""],
+      onContinue: makeAsteroidClearedContinue(asteroidId, result)
+    });
+    logAdd("RESOURCE", `Day ${gameState.stats.day}: ${result}`, { locationId: asteroidId });
+    return;
+  }
+
+  const eventData = rollUninhabitedOutcome(asteroidId, false);
+  const rumor = getActiveRumorForAsteroid(asteroidId);
+  if (rumor) {
+    const originalContinue = eventData.onContinue;
+    const resultText = rumor.isTrue
+      ? `The lead at ${node.name} resolved with a minor find.`
+      : `The rumor about ${node.name} proved false.`;
+    eventData.onContinue = () => {
+      markRumorResolved(asteroidId, resultText);
+      if (originalContinue) originalContinue();
+    };
+  }
+  startEvent(eventData);
 }
 
 /**
@@ -11192,26 +11317,19 @@ function showAsteroidTradeModal(asteroidId) {
   const node = mapNodes.find(n => n.id === asteroidId);
   if (!node || node.type !== "asteroid") return;
   
-  // For now, show a simple trade interface
-  // TODO: Implement full trading system with limited inventory
-  
-  // Start event in OUTCOME phase (trade is a result, not a choice)
   const eventData = {
     phase: "OUTCOME",
     title: "Trade Opportunity",
     body: "",
-    options: ["", "", ""], // Not used in OUTCOME phase
-    outcomeText: "The inhabitants offer limited trade goods. (Trading system coming soon)",
+    options: ["", "", ""],
+    outcomeText: "The inhabitants offer limited trade goods from pressure-sealed crates.",
     image: null,
     onContinue: () => {
-      // Set scene to MAP BEFORE ending event to prevent re-triggering
-      gameState.travel.currentSceneId = "MAP";
       endEvent();
-      handleAsteroidLeave(asteroidId);
+      openTraderMerchant(asteroidId);
     }
   };
-  
-  // Start event in OUTCOME phase
+
   startEvent(eventData);
 }
 
@@ -11431,6 +11549,11 @@ function landAtCurrentLocation() {
   let startSceneId;
 
   // Determine starting scene based on location type
+  if (type === "mars") {
+    finishRun("WON", "You reached Mars before the mission collapsed.");
+    return;
+  }
+
   if (type === "station") {
     // Enter station HUB panorama
     const baseId = getBaseLocationId(instanceId);
@@ -11475,6 +11598,14 @@ function landAtCurrentLocation() {
     const hullAfter = Math.max(0, Math.min(100, hullBefore - finalDamage));
     
     setShipIntegrity(gameState, hullAfter);
+    if (finalDamage > 0) {
+      const subsystems = ["STRUCTURAL", "ELECTRICAL", "LIFE_SUPPORT"];
+      const hit = subsystems[Math.floor(Math.random() * subsystems.length)];
+      gameState.ship.subsystems[hit].damage = Math.min(100, gameState.ship.subsystems[hit].damage + Math.ceil(finalDamage * 0.5));
+      gameState.ship.subsystems[hit].flavorText = `Rough landing on ${node.name}`;
+    }
+    checkEndConditions();
+    if (isRunOver()) return;
     
     gameState.travel.landingFlavorText = getLandingFlavorText(landingRisk, finalDamage, rolledDamage);
     if (finalDamage > 0) {
@@ -11509,6 +11640,12 @@ function landAtCurrentLocation() {
  */
 function updateTravelButton() {
   if (!el.actionTravel) return;
+  if (isRunOver()) {
+    el.actionTravel.textContent = gameState.meta.runStatus === "WON" ? "MISSION COMPLETE" : "RUN ENDED";
+    el.actionTravel.disabled = true;
+    return;
+  }
+  el.actionTravel.disabled = false;
 
   // If there's a selected destination different from current location, show TRAVEL
   // (Player is planning to travel to a new location)
@@ -11528,7 +11665,7 @@ function updateTravelButton() {
     // Check if current location is landable
     const currentLocationNode = mapNodes.find(n => n.id === gameState.travel.currentLocationId);
     if (currentLocationNode) {
-      const landableTypes = ["station", "outpost", "asteroid", "ship"];
+      const landableTypes = ["station", "outpost", "asteroid", "ship", "earth", "moon", "mars"];
       const isLandable = landableTypes.includes(currentLocationNode.type);
       
       if (isLandable) {
@@ -12155,6 +12292,18 @@ function renderLog() {
             gameState.travel.activeRumorAsteroidIds.has(targetId);
           const isCompleted = gameState.travel.completedRumorAsteroidIds &&
             gameState.travel.completedRumorAsteroidIds.has(targetId);
+          const activeRumor = gameState.travel.purchasedRumors?.[targetId];
+          const completedRumor = gameState.travel.completedRumors?.[targetId];
+          const status = document.createElement("div");
+          status.className = "rumor-status";
+          status.textContent = completedRumor
+            ? (completedRumor.isTrue ? "RESOLVED" : "FALSE LEAD")
+            : activeRumor
+              ? `ACTIVE ${String(activeRumor.kind || "lead").toUpperCase()}`
+              : isPinned
+                ? "PINNED"
+                : "CLICK TO PIN";
+          entryDiv.appendChild(status);
           if (isPinned) {
             entryDiv.classList.add("is-active");
           }
@@ -12162,6 +12311,7 @@ function renderLog() {
             entryDiv.classList.add("is-completed");
           }
           entryDiv.addEventListener("click", () => {
+            if (isCompleted) return;
             if (!gameState.travel.activeRumorAsteroidIds) {
               gameState.travel.activeRumorAsteroidIds = new Set();
             }
@@ -12373,6 +12523,8 @@ function getApplicableMedicalSupplies(crewStatus) {
  */
 function applyShipDamage(damageAmount, cause = "") {
   addShipIntegrity(gameState, -damageAmount);
+  checkEndConditions();
+  if (isRunOver()) return;
 
   // Randomly assign damage to one subsystem
   const subsystems = ["STRUCTURAL", "ELECTRICAL", "LIFE_SUPPORT"];
@@ -12510,7 +12662,7 @@ function applyUpgrade(partId) {
  */
 function getScanRadiusMultiplier() {
   const scannerTier = gameState.ship.upgrades.scanner || 0;
-  return 1.0 + (scannerTier * 0.25);
+  return 1.0 + (scannerTier * 0.25) + getCrewBonus("scanRange");
 }
 
 /**
@@ -12519,131 +12671,83 @@ function getScanRadiusMultiplier() {
  */
 function getShipSpeedMultiplier() {
   const engineTier = gameState.ship.upgrades.engine || 0;
-  return 1.0 + (engineTier * 0.05);
+  return 1.0 + (engineTier * 0.05) + getCrewBonus("travelSpeed");
 }
+
+/**
+ * Hide the canvas + scene container and stop the map animation loop. Used
+ * by all non-TRAVEL tabs so they don't fight the map for the viewport.
+ */
+function hideMapSurfaces() {
+  if (el.canvas) {
+    el.canvas.hidden = true;
+    el.canvas.style.display = "none";
+    el.canvas.style.visibility = "hidden";
+  }
+  if (el.sceneContainer) {
+    el.sceneContainer.hidden = true;
+    el.sceneContainer.setAttribute("hidden", "");
+    el.sceneContainer.style.display = "none";
+    el.sceneContainer.style.visibility = "hidden";
+  }
+  stopAnimationLoop();
+}
+
+/**
+ * Reset the right-hand preview frame to its placeholder state. Used by
+ * non-TRAVEL tabs (and the SETTINGS placeholder) to clear stale art.
+ */
+function resetPreviewPlaceholder() {
+  if (!el.previewFrame) return;
+  const previewImg = el.previewFrame.querySelector("img");
+  if (previewImg) previewImg.style.display = "none";
+  if (el.previewPlaceholder) {
+    el.previewPlaceholder.style.display = "flex";
+    el.previewPlaceholder.textContent = "PREVIEW";
+  }
+}
+
+/**
+ * Placeholder for the SETTINGS tab. The SETTINGS button exists in the
+ * HTML but no settings UI has been built yet — this keeps the tab
+ * navigable without leaving stale CREW/SHIP/INVENTORY DOM in place.
+ */
+function renderSettings() {
+  // No-op for now: hideMapSurfaces() + resetPreviewPlaceholder() handle the
+  // visual state. When real settings UI is added, build it here.
+}
+
+/**
+ * Render registry for non-TRAVEL tabs. Each entry hides the map surfaces
+ * and clears the preview, then delegates to the per-tab renderer. The
+ * TRAVEL tab is special-cased below because of map/scene/event branching.
+ */
+const NON_TRAVEL_TAB_RENDERERS = {
+  CREW: renderCrew,
+  SHIP: renderShip,
+  INVENTORY: renderInventory,
+  LOG: renderLog,
+  SETTINGS: renderSettings,
+};
 
 function render() {
   renderHeader();
   renderNav();
   renderStats();
   updateTravelButton();
-  
+
   syncHullIntegrity(gameState);
-  
-  // Show appropriate view based on current tab
-  if (gameState.meta.tab === "CREW") {
-    // Hide canvas and scene container completely
-    if (el.canvas) {
-      el.canvas.hidden = true;
-      el.canvas.style.display = "none";
-      el.canvas.style.visibility = "hidden";
-    }
-    if (el.sceneContainer) {
-      el.sceneContainer.hidden = true;
-      el.sceneContainer.setAttribute("hidden", "");
-      el.sceneContainer.style.display = "none";
-      el.sceneContainer.style.visibility = "hidden";
-    }
-    // Stop animation loop when not on map
-    stopAnimationLoop();
-    // Clear preview for CREW tab
-    if (el.previewFrame) {
-      const previewImg = el.previewFrame.querySelector("img");
-      if (previewImg) {
-        previewImg.style.display = "none";
-      }
-      if (el.previewPlaceholder) {
-        el.previewPlaceholder.style.display = "flex";
-        el.previewPlaceholder.textContent = "PREVIEW";
-      }
-    }
-    // Render crew view
-    renderCrew();
-  } else if (gameState.meta.tab === "SHIP") {
-    // Hide canvas and scene container completely
-    if (el.canvas) {
-      el.canvas.hidden = true;
-      el.canvas.style.display = "none";
-      el.canvas.style.visibility = "hidden";
-    }
-    if (el.sceneContainer) {
-      el.sceneContainer.hidden = true;
-      el.sceneContainer.setAttribute("hidden", "");
-      el.sceneContainer.style.display = "none";
-      el.sceneContainer.style.visibility = "hidden";
-    }
-    // Stop animation loop when not on map
-    stopAnimationLoop();
-    // Clear preview for SHIP tab
-    if (el.previewFrame) {
-      const previewImg = el.previewFrame.querySelector("img");
-      if (previewImg) {
-        previewImg.style.display = "none";
-      }
-      if (el.previewPlaceholder) {
-        el.previewPlaceholder.style.display = "flex";
-        el.previewPlaceholder.textContent = "PREVIEW";
-      }
-    }
-    // Render ship view
-    renderShip();
-  } else if (gameState.meta.tab === "INVENTORY") {
-    // Hide canvas and scene container completely
-    if (el.canvas) {
-      el.canvas.hidden = true;
-      el.canvas.style.display = "none";
-      el.canvas.style.visibility = "hidden";
-    }
-    if (el.sceneContainer) {
-      el.sceneContainer.hidden = true;
-      el.sceneContainer.setAttribute("hidden", "");
-      el.sceneContainer.style.display = "none";
-      el.sceneContainer.style.visibility = "hidden";
-    }
-    // Stop animation loop when not on map
-    stopAnimationLoop();
-    // Clear preview for INVENTORY tab (will show supply previews on hover)
-    if (el.previewFrame) {
-      const previewImg = el.previewFrame.querySelector("img");
-      if (previewImg) {
-        previewImg.style.display = "none";
-      }
-      if (el.previewPlaceholder) {
-        el.previewPlaceholder.style.display = "flex";
-        el.previewPlaceholder.textContent = "PREVIEW";
-      }
-    }
-    // Render inventory view
-    renderInventory();
-  } else if (gameState.meta.tab === "LOG") {
-    // Hide canvas and scene container completely
-    if (el.canvas) {
-      el.canvas.hidden = true;
-      el.canvas.style.display = "none";
-      el.canvas.style.visibility = "hidden";
-    }
-    if (el.sceneContainer) {
-      el.sceneContainer.hidden = true;
-      el.sceneContainer.setAttribute("hidden", "");
-      el.sceneContainer.style.display = "none";
-      el.sceneContainer.style.visibility = "hidden";
-    }
-    // Stop animation loop when not on map
-    stopAnimationLoop();
-    // Clear preview for LOG tab
-    if (el.previewFrame) {
-      const previewImg = el.previewFrame.querySelector("img");
-      if (previewImg) {
-        previewImg.style.display = "none";
-      }
-      if (el.previewPlaceholder) {
-        el.previewPlaceholder.style.display = "flex";
-        el.previewPlaceholder.textContent = "PREVIEW";
-      }
-    }
-    // Render log view
-    renderLog();
-  } else if (gameState.meta.tab === "TRAVEL") {
+
+  const tab = gameState.meta.tab;
+  const tabRenderer = NON_TRAVEL_TAB_RENDERERS[tab];
+  if (tabRenderer) {
+    hideMapSurfaces();
+    resetPreviewPlaceholder();
+    tabRenderer();
+    return;
+  }
+
+  if (tab === "TRAVEL") {
     // Clear any crew, ship, inventory, or log content that might be in viewport-content
     const viewportContent = document.getElementById("viewport-content");
     if (viewportContent) {
@@ -12797,31 +12901,12 @@ function render() {
         renderPreview();
       }
     }
-  } else {
-    // Not on TRAVEL, CREW, SHIP, INVENTORY, or LOG tab - hide canvas and scene container
-    if (el.canvas) {
-      el.canvas.hidden = true;
-      el.canvas.style.display = "none";
-    }
-    if (el.sceneContainer) {
-      el.sceneContainer.hidden = true;
-      el.sceneContainer.setAttribute("hidden", "");
-      el.sceneContainer.style.display = "none";
-    }
-    // Stop animation loop when not on map
-    stopAnimationLoop();
-    // Clear preview for non-TRAVEL tabs
-    if (el.previewFrame) {
-      const previewImg = el.previewFrame.querySelector("img");
-      if (previewImg) {
-        previewImg.style.display = "none";
-      }
-      if (el.previewPlaceholder) {
-        el.previewPlaceholder.style.display = "flex";
-        el.previewPlaceholder.textContent = "PREVIEW";
-      }
-    }
+    return;
   }
+
+  // Unknown tab: fall back to a clean state.
+  hideMapSurfaces();
+  resetPreviewPlaceholder();
 }
 
 // ---------------------------
@@ -12879,7 +12964,7 @@ function wireUI() {
         // Check if current location is landable
         const currentLocationNode = mapNodes.find(n => n.id === gameState.travel.currentLocationId);
         if (currentLocationNode) {
-          const landableTypes = ["station", "outpost", "asteroid", "ship"];
+          const landableTypes = ["station", "outpost", "asteroid", "ship", "earth", "moon", "mars"];
           const isLandable = landableTypes.includes(currentLocationNode.type);
           
           if (isLandable) {
@@ -12932,7 +13017,7 @@ function wireUI() {
     gameState.travel.travelStartLocationId = currentLocationId;
     gameState.travel.travelDestinationId = selectedId;
     gameState.travel.travelTotalDays = actualTravelDays;
-    gameState.travel.travelStartTime = Date.now();
+    gameState.travel.travelStartTime = perfNow();
     gameState.travel.travelStartDay = gameState.stats.day;
     // Store arrival day info for locked ghost calculation
     gameState.travel.lockedGhostPosition = { arrivalDay: gameState.stats.day + actualTravelDays };
@@ -12949,7 +13034,7 @@ function wireUI() {
       }
       
       // Calculate progress based on elapsed time
-      const elapsed = Date.now() - gameState.travel.travelStartTime;
+      const elapsed = perfNow() - gameState.travel.travelStartTime;
       gameState.travel.travelProgress = Math.min(1, elapsed / travelDurationMs);
       
       // Advance days as travel progresses (matching wait button speed: 2 days per second, or 4 days per second if double speed)
@@ -12991,6 +13076,10 @@ function wireUI() {
         gameState.travel.currentSceneId = "MAP";
         
         debugLog("[ARRIVE]", selectedId, "scene=MAP");
+        if (selectedId === "mars") {
+          finishRun("WON", "You reached Mars before the mission collapsed.");
+          return;
+        }
         
         // If landing on the broadcast station, advance to next station
         const routeOrder = ["earth", "outpost-0", "station-01", "outpost-1", "station-02", "outpost-2", "station-03", "mars"];
@@ -13124,6 +13213,7 @@ function wireUI() {
    * @param {boolean} isDoubleRadius Whether to double the scan radius
    */
   function performScan(scanCenterRing, scanCenterAngle, isDeepScan, isDoubleRadius) {
+    if (isRunOver()) return;
     // Only scan when on the map view
     if (gameState.meta.tab !== "TRAVEL" || gameState.travel.currentSceneId !== "MAP") {
       debugLog("[SCAN] Blocked: not on MAP view");
@@ -13175,8 +13265,14 @@ function wireUI() {
       }
     }
     
-    // Determine scan radius
-    let scanRadius = isDeepScan ? 0.5 : 1.0; // Deep scan: 50% radius, Basic: full radius
+    if (gameState.travel.scannerGlitchDays > 0 && Math.random() < 0.35) {
+      logAdd("SCAN", `Day ${gameState.stats.day}: Scanner glitch spoiled the scan pulse.`, {});
+      gameState.travel.scannerGlitchDays = Math.max(0, gameState.travel.scannerGlitchDays - 1);
+      return;
+    }
+
+    // Determine scan radius. Scanner upgrades widen both basic and deep scans.
+    let scanRadius = (isDeepScan ? 0.5 : 1.0) * getScanRadiusMultiplier();
     
     // Double radius if requested
     if (isDoubleRadius) {
@@ -13186,7 +13282,7 @@ function wireUI() {
     
     // Start scan pulse animation
     gameState.travel.scanPulse.isActive = true;
-    gameState.travel.scanPulse.startTime = Date.now();
+    gameState.travel.scanPulse.startTime = perfNow();
     gameState.travel.scanPulse.centerRing = scanCenterRing;
     gameState.travel.scanPulse.centerAngle = scanCenterAngle;
     gameState.travel.scanPulse.maxRadius = scanRadius;
@@ -13412,7 +13508,7 @@ function wireUI() {
         if (gameState.travel.useContinuousZoom) {
           zoom = gameState.travel.mapZoomContinuous;
         } else {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
+          const zoomScales = ZOOM_SCALES;
           const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
           zoom = baseZoom * gameState.travel.mapZoomFine;
         }
@@ -13542,14 +13638,20 @@ function wireUI() {
     });
   }
 
-  // Zoom controls - Discrete snap levels with fine-tuning
+  // Zoom controls — discrete snap levels with continuous fine-tuning.
+  // MIN/MAX_CONTINUOUS_ZOOM and ZOOM_SCALES are imported from js/scheduler.js
+  // so wheel/touch/keyboard handlers all agree.
   if (el.canvas) {
-    // Zoom limits for continuous zoom
-    const MIN_CONTINUOUS_ZOOM = 1.2;
-    const MAX_CONTINUOUS_ZOOM = 12.0;
-    
+    // Promote the current discrete zoom level to a continuous zoom value
+    // the first time a continuous-zoom input is used. Centralized to avoid
+    // the same 4-line block being repeated in every input handler.
+    function ensureContinuousZoom() {
+      if (gameState.travel.useContinuousZoom) return;
+      gameState.travel.mapZoomContinuous = resolveDiscreteZoom(gameState.travel);
+      gameState.travel.useContinuousZoom = true;
+    }
 
-    // Mouse wheel zoom - handle both discrete (normal scroll) and continuous (pinch with Ctrl/Cmd)
+    // Mouse wheel zoom: discrete snap on normal scroll, continuous on pinch (Ctrl/Cmd).
     let wheelAccumulator = 0;
     
     el.canvas.addEventListener("wheel", (e) => {
@@ -13561,12 +13663,7 @@ function wireUI() {
       if (e.ctrlKey || e.metaKey) {
         // Pinch zoom - smooth continuous zoom
         // Initialize continuous zoom from current state if not already active
-        if (!gameState.travel.useContinuousZoom) {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
-          const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
-          gameState.travel.mapZoomContinuous = baseZoom * gameState.travel.mapZoomFine;
-          gameState.travel.useContinuousZoom = true;
-        }
+        ensureContinuousZoom();
         
         // Calculate zoom change - deltaY is negative when pinching out (zooming in)
         // Use exponential scaling for smooth, natural-feeling zoom
@@ -13580,12 +13677,7 @@ function wireUI() {
       } else {
         // Normal mouse wheel - use continuous zoom (no discrete snapping)
         // Initialize continuous zoom from current state if not already active
-        if (!gameState.travel.useContinuousZoom) {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
-          const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
-          gameState.travel.mapZoomContinuous = baseZoom * gameState.travel.mapZoomFine;
-          gameState.travel.useContinuousZoom = true;
-        }
+        ensureContinuousZoom();
         
         // Use continuous zoom with wheel
         const zoomDelta = -e.deltaY * 0.01; // Sensitivity for wheel scroll
@@ -13610,12 +13702,7 @@ function wireUI() {
         lastPinchDistance = Math.sqrt(dx * dx + dy * dy);
         
         // Initialize continuous zoom from current state
-        if (!gameState.travel.useContinuousZoom) {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0 };
-          const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
-          gameState.travel.mapZoomContinuous = baseZoom * gameState.travel.mapZoomFine;
-          gameState.travel.useContinuousZoom = true;
-        }
+        ensureContinuousZoom();
       }
     });
 
@@ -13654,12 +13741,7 @@ function wireUI() {
       if (e.key === "+" || e.key === "=" || e.key === "NumpadAdd") {
         e.preventDefault();
         // Initialize continuous zoom if not already active
-        if (!gameState.travel.useContinuousZoom) {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
-          const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
-          gameState.travel.mapZoomContinuous = baseZoom * gameState.travel.mapZoomFine;
-          gameState.travel.useContinuousZoom = true;
-        }
+        ensureContinuousZoom();
         // Zoom in
         const zoomFactor = 1.1; // 10% zoom in per press
         const newZoom = Math.min(MAX_CONTINUOUS_ZOOM, gameState.travel.mapZoomContinuous * zoomFactor);
@@ -13668,12 +13750,7 @@ function wireUI() {
       } else if (e.key === "-" || e.key === "_" || e.key === "NumpadSubtract") {
         e.preventDefault();
         // Initialize continuous zoom if not already active
-        if (!gameState.travel.useContinuousZoom) {
-          const zoomScales = { 1: 1.2, 2: 2.4, 3: 3.6, 4: 4.8, 5: 6.0, 6: 8.4, 7: 12.0 };
-          const baseZoom = zoomScales[gameState.travel.mapZoomLevel] || 1.2;
-          gameState.travel.mapZoomContinuous = baseZoom * gameState.travel.mapZoomFine;
-          gameState.travel.useContinuousZoom = true;
-        }
+        ensureContinuousZoom();
         // Zoom out
         const zoomFactor = 0.9; // 10% zoom out per press
         const newZoom = Math.max(MIN_CONTINUOUS_ZOOM, gameState.travel.mapZoomContinuous * zoomFactor);
@@ -13740,6 +13817,16 @@ const dispatchAction = createDispatchAction({
 // Wait for DOM to be fully loaded before initializing
 function initGame() {
   initDebugFromUrl();
+
+  // Wire scheduler + time module now that all hooks/render are declared.
+  setRenderFunction(render);
+  _advanceDaysImpl = createAdvanceDays({
+    gameState,
+    processArtifactCarryRisks,
+    processCrewDegradation,
+    getLifeSupportDrainMultiplier,
+    onAfterAdvance: checkEndConditions,
+  });
 
   // Initialize random outpost image mapping for this playthrough
   if (!gameState.travel.outpostImageMapping) {
