@@ -1,4 +1,4 @@
-import { initDebugFromUrl, debugLog } from "./js/debug.js";
+import { initDebugFromUrl, debugLog, isDebug } from "./js/debug.js";
 import { syncHullIntegrity, addShipIntegrity, setShipIntegrity } from "./js/hull.js";
 import { shouldSuppressTravelMapFallback } from "./js/travelViewMode.js";
 import { createDispatchAction } from "./js/dispatchAction.js";
@@ -100,15 +100,38 @@ Constraints:
 // of main.js while we incrementally extract systems.
 
 // Dev flags
-const DEV_SEED_STARTING_ITEMS = true; // Enable/disable starter artifacts and items for testing
+const DEV_SEED_STORAGE_KEY = "rpr_dev_seed";
 
-// Generate randomized route at initialization
-const routeStructure = {
+function shouldDevSeedInventory() {
+  try {
+    if (isDebug()) return true;
+    return localStorage.getItem(DEV_SEED_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setDevSeedPreference(enabled) {
+  try {
+    localStorage.setItem(DEV_SEED_STORAGE_KEY, enabled ? "true" : "false");
+  } catch {
+    // ignore storage failures
+  }
+}
+
+// Generate randomized route at initialization (rebuilt on New Game)
+let routeStructure = {
   segments: generateRandomizedRoute(),
 };
 
 // Calculate cumulative travel times from randomized route
-const cumulativeTravelTimes = routeCumulativeTravelTimes(routeStructure.segments);
+let cumulativeTravelTimes = routeCumulativeTravelTimes(routeStructure.segments);
+
+function rebuildWorld() {
+  routeStructure = { segments: generateRandomizedRoute() };
+  cumulativeTravelTimes = routeCumulativeTravelTimes(routeStructure.segments);
+  mapNodes = buildMapNodes();
+}
 
 /** Get all station instances for a given base id (e.g. "station-01"). */
 function getStationInstances(baseId) {
@@ -580,7 +603,7 @@ function buildMapNodes() {
 }
 
 /** @type {Node[]} */
-const mapNodes = buildMapNodes();
+let mapNodes = buildMapNodes();
 
 // ---------------------------
 // Location Scene Data
@@ -967,7 +990,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Leave",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -995,7 +1018,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Leave",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1023,7 +1046,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Leave",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1051,7 +1074,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Leave",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1079,7 +1102,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Leave",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1118,7 +1141,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Return",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1156,7 +1179,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Return",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1194,7 +1217,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Return",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1214,7 +1237,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "News",
-          action: { type: "INFO" } // Stub for now
+          action: { type: "INFO", infoKey: "admin_news" }
         },
         {
           shape: "rect",
@@ -1223,7 +1246,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.12,
           h: 0.08,
           label: "Requests",
-          action: { type: "INFO" } // Stub for now
+          action: { type: "INFO", infoKey: "admin_requests" }
         },
         {
           shape: "rect",
@@ -1232,7 +1255,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Return",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1252,7 +1275,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Order",
-          action: { type: "INFO" } // Stub for now
+          action: { type: "OPEN_CANTINA", tab: "order" }
         },
         {
           shape: "rect",
@@ -1261,7 +1284,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.12,
           h: 0.08,
           label: "Chat",
-          action: { type: "INFO" } // Stub for now
+          action: { type: "OPEN_CANTINA", tab: "chat" }
         },
         {
           shape: "rect",
@@ -1270,7 +1293,7 @@ function createStationLocation(baseId, displayName, services) {
           w: 0.15,
           h: 0.08,
           label: "Return",
-          action: { type: "NAVIGATE", to: "HUB" }
+          action: { type: "NAVIGATE", to: "EXTERIOR" }
         }
       ]
     };
@@ -1320,7 +1343,57 @@ const LOCATIONS = {
       ARRIVAL: {
         image: null,
         title: "Mars Approach",
-        hotspots: []
+        hotspots: [
+          {
+            shape: "rect",
+            x: 0.30,
+            y: 0.62,
+            w: 0.40,
+            h: 0.12,
+            label: "Complete Mars Insertion",
+            action: { type: "COMPLETE_MISSION" }
+          }
+        ]
+      }
+    }
+  },
+  "ship-0": {
+    id: "ship-0",
+    name: "NPC SHIP",
+    type: "ship",
+    scenes: {
+      ARRIVAL: {
+        image: null,
+        title: "Ship Approach",
+        hotspots: [
+          {
+            shape: "rect",
+            x: 0.25,
+            y: 0.62,
+            w: 0.18,
+            h: 0.10,
+            label: "Dock",
+            action: { type: "SHIP_DOCK" }
+          },
+          {
+            shape: "rect",
+            x: 0.41,
+            y: 0.62,
+            w: 0.18,
+            h: 0.10,
+            label: "Hail",
+            action: { type: "SHIP_HAIL" }
+          },
+          {
+            shape: "rect",
+            x: 0.57,
+            y: 0.62,
+            w: 0.18,
+            h: 0.10,
+            label: "Leave",
+            action: { type: "LEAVE_LOCATION" }
+          }
+        ]
       }
     }
   },
@@ -1490,14 +1563,14 @@ const LOCATIONS = {
     dockyard: true,
     clinic: true,
     admin: true,
-    cantina: false
+    cantina: true
   }),
   "station-03": createStationLocation("station-03", "STATION 03", {
     market: true,
     dockyard: true,
     clinic: true,
     admin: true,
-    cantina: false
+    cantina: true
   })
   // Add more locations as needed - images will be auto-generated using naming convention
 };
@@ -2318,11 +2391,10 @@ function grantArtifactById(artifactId, sourceNodeId = null) {
 
 /**
  * Seed starting inventory with dev items for testing
- * Only runs if DEV_SEED_STARTING_ITEMS is true and devSeedApplied is false
+ * Only runs when dev seed is enabled and devSeedApplied is false
  */
 function seedDevStartingInventory() {
-  // Check dev flag and guard
-  if (!DEV_SEED_STARTING_ITEMS || gameState.meta.devSeedApplied) {
+  if (!shouldDevSeedInventory() || gameState.meta.devSeedApplied) {
     return;
   }
   
@@ -3044,6 +3116,11 @@ const el = {
   
   // Modal
   modalLayer: /** @type {HTMLElement|null} */ (document.getElementById("modal-layer")),
+
+  // Title screen
+  titleScreen: /** @type {HTMLElement|null} */ (document.getElementById("title-screen")),
+  titleNewGame: /** @type {HTMLButtonElement|null} */ (document.getElementById("title-new-game")),
+  app: /** @type {HTMLElement|null} */ (document.getElementById("app")),
 };
 
 // ---------------------------
@@ -3087,6 +3164,8 @@ function renderSegmentBar(container, pct) {
 
 /** @param {Tab} tab */
 function setTab(tab) {
+  if (gameState.meta.screen === "TITLE") return;
+
   // Stop waiting if switching tabs
   if (gameState.travel.isWaiting && gameState.travel.waitIntervalId !== null) {
     clearInterval(gameState.travel.waitIntervalId);
@@ -3202,6 +3281,274 @@ function checkEndConditions() {
   if (gameState.stats.day > gameState.stats.deadline && gameState.travel.currentLocationId !== "mars") {
     finishRun("LOST", "The Mars window closed before you arrived.");
   }
+}
+
+function resetGameStateData() {
+  const fresh = createInitialState();
+  fresh.meta.screen = "PLAYING";
+  gameState.meta = fresh.meta;
+  gameState.stats = fresh.stats;
+  gameState.travel = fresh.travel;
+  gameState.crew = fresh.crew;
+  gameState.inventory = fresh.inventory;
+  gameState.log = fresh.log;
+  gameState.ship = fresh.ship;
+}
+
+function showTitleScreen() {
+  gameState.meta.screen = "TITLE";
+  if (el.titleScreen) {
+    el.titleScreen.hidden = false;
+    el.titleScreen.removeAttribute("hidden");
+  }
+  if (el.app) {
+    el.app.classList.add("is-title-hidden");
+  }
+}
+
+function hideTitleScreen() {
+  gameState.meta.screen = "PLAYING";
+  if (el.titleScreen) {
+    el.titleScreen.hidden = true;
+    el.titleScreen.setAttribute("hidden", "");
+  }
+  if (el.app) {
+    el.app.classList.remove("is-title-hidden");
+  }
+}
+
+function startIntroBriefing() {
+  startEvent({
+    phase: "PROMPT",
+    title: "RED PLANET RUSH",
+    body: "Your ship limps away from Earth with failing life support and a fractured hull. Reach Mars before day 300 or the transfer window closes forever. Scan the void, choose your stops carefully, and spend credits like they are oxygen.",
+    options: ["Begin Mission", "", ""],
+    optionHandlers: [
+      () => {
+        endEvent();
+        gameState.meta.tab = "TRAVEL";
+        gameState.travel.currentSceneId = "MAP";
+        logAdd("MISSION", `Day ${gameState.stats.day}: Mars run initiated from Earth.`, {});
+        render();
+        startAnimationLoop();
+      },
+      null,
+      null,
+    ],
+  });
+}
+
+function resetAndStartNewGame() {
+  stopContinuousActions();
+  endEvent();
+  closeAllOverlays();
+
+  rebuildWorld();
+  resetGameStateData();
+  gameState.meta.screen = "PLAYING";
+
+  gameState.travel.outpostImageMapping = initializeOutpostImageMapping();
+  gameState.travel.asteroidImageMapping = initializeAsteroidImageMapping(
+    mapNodes.filter((n) => n.type === "asteroid")
+  );
+  gameState.travel.shipImageMapping = initializeShipImageMapping(
+    mapNodes.filter((n) => n.type === "ship")
+  );
+  initializeRevealedNodes();
+  initializeCrew();
+  seedDevStartingInventory();
+
+  hideTitleScreen();
+
+  if (el.sceneContainer) {
+    el.sceneContainer.hidden = true;
+    el.sceneContainer.setAttribute("hidden", "");
+    el.sceneContainer.style.display = "none";
+  }
+  if (el.sceneImage) {
+    el.sceneImage.src = "";
+    el.sceneImage.style.display = "none";
+  }
+  if (el.sceneHotspots) {
+    el.sceneHotspots.innerHTML = "";
+  }
+  if (el.canvas) {
+    el.canvas.hidden = false;
+    el.canvas.removeAttribute("hidden");
+    el.canvas.style.display = "block";
+  }
+
+  gameState.travel.currentSceneId = "MAP";
+  gameState.meta.tab = "TRAVEL";
+  render();
+  startIntroBriefing();
+}
+
+const ADMIN_NEWS_SNIPPETS = [
+  "Mars transfer windows remain unstable beyond day 300. Late arrivals risk total mission loss.",
+  "Station dockyards report supply shortages along the inner belt route.",
+  "Independent traders warn of increased pirate activity near uncharted asteroids.",
+  "Research vessels recommend deep scans before committing to long intercept burns.",
+];
+
+function handleInfoAction(action) {
+  const infoKey = action.infoKey || "generic";
+
+  if (infoKey === "admin_news") {
+    const snippet = ADMIN_NEWS_SNIPPETS[Math.floor(Math.random() * ADMIN_NEWS_SNIPPETS.length)];
+    startEvent({
+      phase: "OUTCOME",
+      title: "STATION NEWS",
+      outcomeText: snippet,
+      options: ["", "", ""],
+    });
+    return;
+  }
+
+  if (infoKey === "admin_requests") {
+    startEvent({
+      phase: "PROMPT",
+      title: "OPEN REQUESTS",
+      body: "A courier offers a paid side contract: deliver survey data from your next three deep scans.",
+      options: ["Accept (50c)", "Decline", ""],
+      optionHandlers: [
+        () => {
+          if (gameState.stats.credits < 50) {
+            startEvent({
+              phase: "OUTCOME",
+              title: "INSUFFICIENT CREDITS",
+              outcomeText: "You cannot afford the courier fee.",
+              options: ["", "", ""],
+            });
+            return;
+          }
+          gameState.stats.credits -= 50;
+          gameState.stats.deadline += 2;
+          logAdd("ADMIN", `Day ${gameState.stats.day}: Accepted courier contract. Deadline extended to day ${gameState.stats.deadline}.`, {});
+          startEvent({
+            phase: "OUTCOME",
+            title: "CONTRACT ACCEPTED",
+            outcomeText: `Courier fee paid. Mission deadline extended to day ${gameState.stats.deadline}.`,
+            options: ["", "", ""],
+          });
+        },
+        () => {
+          endEvent();
+        },
+        null,
+      ],
+    });
+    return;
+  }
+
+  startEvent({
+    phase: "OUTCOME",
+    title: "INFO",
+    outcomeText: "No additional information available.",
+    options: ["", "", ""],
+  });
+}
+
+function handleCompleteMission() {
+  finishRun("WON", "You reached Mars before the mission collapsed.");
+}
+
+function handleShipHail(shipId) {
+  const node = mapNodes.find((n) => n.id === shipId);
+  if (!node || node.type !== "ship") return;
+
+  generateShipDeepScanData(node);
+  const shipType = node.shipType || "Unknown";
+  const inhabited = node.inhabited || "unknown";
+  const dockingRisk = node.dockingRisk || "Uncertain";
+
+  startEvent({
+    phase: "OUTCOME",
+    title: "OPEN CHANNEL",
+    outcomeText: `Vessel class: ${shipType}. Occupancy: ${inhabited}. Docking risk: ${dockingRisk}. They acknowledge your hail but offer no docking clearance yet.`,
+    options: ["", "", ""],
+  });
+}
+
+function handleShipDock(shipId) {
+  const node = mapNodes.find((n) => n.id === shipId);
+  if (!node || node.type !== "ship") return;
+
+  generateShipDeepScanData(node);
+  advanceDays(1);
+
+  const dockingRisk = node.dockingRisk || "Uncertain";
+  const rolledDamage = getLandingDamageRoll(dockingRisk);
+  const reduction = getLandingDamageReduction();
+  const finalDamage = Math.max(0, rolledDamage - reduction);
+  if (finalDamage > 0) {
+    setShipIntegrity(gameState, Math.max(0, (gameState.stats.shipIntegrity ?? 100) - finalDamage));
+    logAdd("DOCKING", `Day ${gameState.stats.day}: Rough docking cost ${finalDamage}% hull integrity.`, { locationId: shipId });
+  }
+  checkEndConditions();
+  if (isRunOver()) return;
+
+  const shipType = node.shipType || "Cargo";
+
+  if (shipType === "Pirate") {
+    const ambushDamage = Math.floor(Math.random() * 12) + 5;
+    applyShipDamage(ambushDamage, "Pirate ambush");
+    checkEndConditions();
+    startEvent({
+      phase: "OUTCOME",
+      title: "AMBUSH",
+      outcomeText: `The vessel was a pirate trap. You break dock and retreat, but your ship takes ${ambushDamage}% damage.`,
+      options: ["", "", ""],
+      onContinue: () => {
+        endEvent();
+        gameState.travel.currentSceneId = "MAP";
+        render();
+        startAnimationLoop();
+      },
+    });
+    return;
+  }
+
+  const tradeOffers = {
+    Cargo: { item: "air_canister_s", qty: 1, cost: 35, label: "Buy air canister (35c)" },
+    Passenger: { item: "med_gel", qty: 1, cost: 30, label: "Buy med gel (30c)" },
+    Research: { item: "life_refill_5", qty: 1, cost: 45, label: "Buy life refill (45c)" },
+    Cruise: { item: "nutrient_rations", qty: 1, cost: 25, label: "Buy rations (25c)" },
+  };
+  const offer = tradeOffers[shipType] || tradeOffers.Cargo;
+
+  startEvent({
+    phase: "PROMPT",
+    title: `${shipType.toUpperCase()} VESSEL`,
+    body: `Docking successful${finalDamage > 0 ? ` (${finalDamage}% hull strain)` : ""}. The crew opens a limited trade channel.`,
+    options: [offer.label, "Decline", ""],
+    optionHandlers: [
+      () => {
+        if (gameState.stats.credits < offer.cost) {
+          startEvent({
+            phase: "OUTCOME",
+            title: "TRADE FAILED",
+            outcomeText: "Insufficient credits for this trade.",
+            options: ["", "", ""],
+          });
+          return;
+        }
+        gameState.stats.credits -= offer.cost;
+        addItemToInventory(offer.item, offer.qty, "supply");
+        logAdd("TRADE", `Day ${gameState.stats.day}: Traded with ${shipType} vessel at ${node.name}.`, { locationId: shipId });
+        startEvent({
+          phase: "OUTCOME",
+          title: "TRADE COMPLETE",
+          outcomeText: `Purchase successful. Supplies transferred aboard.`,
+          options: ["", "", ""],
+        });
+      },
+      () => {
+        endEvent();
+      },
+      null,
+    ],
+  });
 }
 
 function getLifeSupportDrainMultiplier() {
@@ -5824,7 +6171,7 @@ function renderEventTerminal() {
           // Default handler: Record choice and switch to OUTCOME phase
           const choice = index;
           event.phase = "OUTCOME";
-          event.outcomeText = `You chose: ${optionText}. (Outcome text - coming soon)`;
+          event.outcomeText = `You chose: ${optionText}. The moment passes without further consequence.`;
           render();
         }
       });
@@ -5888,16 +6235,43 @@ function renderEventTerminal() {
     });
     
     continueBtn.addEventListener("click", () => {
-      // Check for custom continue handler
       if (event.onContinue) {
         event.onContinue();
       } else {
-        // Default: just end event
         endEvent();
       }
     });
-    
-    eventTerminal.appendChild(continueBtn);
+
+    if (isRunOver()) {
+      const playAgainBtn = document.createElement("button");
+      playAgainBtn.className = "event-continue-btn";
+      playAgainBtn.textContent = "Play Again";
+      playAgainBtn.style.cssText = continueBtn.style.cssText;
+      playAgainBtn.style.background = "transparent";
+      playAgainBtn.style.color = "var(--paper)";
+
+      playAgainBtn.addEventListener("mouseenter", () => {
+        playAgainBtn.style.background = "var(--paper)";
+        playAgainBtn.style.color = "var(--ink)";
+      });
+
+      playAgainBtn.addEventListener("mouseleave", () => {
+        playAgainBtn.style.background = "transparent";
+        playAgainBtn.style.color = "var(--paper)";
+      });
+
+      playAgainBtn.addEventListener("click", () => {
+        resetAndStartNewGame();
+      });
+
+      const btnRow = document.createElement("div");
+      btnRow.style.cssText = "display: flex; gap: 12px; flex-wrap: wrap;";
+      btnRow.appendChild(continueBtn);
+      btnRow.appendChild(playAgainBtn);
+      eventTerminal.appendChild(btnRow);
+    } else {
+      eventTerminal.appendChild(continueBtn);
+    }
   }
 }
 
@@ -7394,7 +7768,7 @@ function renderDockyard(locationId) {
     btn.style.borderLeft = index === 0 ? "2px solid var(--paper)" : "none";
     btn.addEventListener("click", () => {
       if (tab.id === "leave") {
-        const returnScene = gameState.travel.returnSceneId || "HUB";
+        const returnScene = gameState.travel.returnSceneId || "EXTERIOR";
         closeAllOverlays();
         gameState.travel.returnSceneId = null;
         gameState.travel.currentSceneId = returnScene;
@@ -8326,7 +8700,7 @@ function renderClinic(locationId) {
     btn.style.borderLeft = index === 0 ? "2px solid var(--paper)" : "none";
     btn.addEventListener("click", () => {
       if (tab.id === "leave") {
-        const returnScene = gameState.travel.returnSceneId || "HUB";
+        const returnScene = gameState.travel.returnSceneId || "EXTERIOR";
         closeAllOverlays();
         gameState.travel.returnSceneId = null;
         gameState.travel.currentSceneId = returnScene;
@@ -8625,7 +8999,7 @@ function renderCantina(locationId) {
     btn.style.borderLeft = index === 0 ? "2px solid var(--paper)" : "none";
     btn.addEventListener("click", () => {
       if (tab.id === "leave") {
-        const returnScene = gameState.travel.returnSceneId || "HUB";
+        const returnScene = gameState.travel.returnSceneId || "EXTERIOR";
         closeAllOverlays();
         gameState.travel.returnSceneId = null;
         gameState.travel.currentSceneId = returnScene;
@@ -8914,7 +9288,7 @@ function renderAdminOverlay(locationId) {
   leaveBtn.className = "merchant-tab is-active";
   leaveBtn.style.borderRadius = "6px";
   leaveBtn.addEventListener("click", () => {
-    const returnScene = gameState.travel.returnSceneId || "HUB";
+    const returnScene = gameState.travel.returnSceneId || "EXTERIOR";
     closeAllOverlays();
     gameState.travel.returnSceneId = null;
     gameState.travel.currentSceneId = returnScene;
@@ -10014,15 +10388,9 @@ function showStationLandingModal(stationNode) {
     gameState.travel.currentLocationId = stationNode.id;
     gameState.travel.selectedLocationId = stationNode.id;
     gameState.travel.selectedDestinationId = null;
-    // Navigate to HUB scene (station panorama)
-    const baseId = getBaseLocationId(stationNode.id);
-    const hubDef = STATION_HUB_DEFS[baseId];
-    if (hubDef) {
-      gameState.travel.stationHubPanelId = hubDef.defaultPanelId;
-      gameState.travel.currentSceneId = "HUB";
-    } else {
+    // Navigate to station exterior district view
+    gameState.travel.stationHubPanelId = null;
     gameState.travel.currentSceneId = "EXTERIOR";
-    }
     hideModal();
     render();
   });
@@ -11550,21 +11918,10 @@ function landAtCurrentLocation() {
 
   // Determine starting scene based on location type
   if (type === "mars") {
-    finishRun("WON", "You reached Mars before the mission collapsed.");
-    return;
-  }
-
-  if (type === "station") {
-    // Enter station HUB panorama
-    const baseId = getBaseLocationId(instanceId);
-    const hubDef = STATION_HUB_DEFS[baseId];
-    if (hubDef) {
-      gameState.travel.stationHubPanelId = hubDef.defaultPanelId;
-      startSceneId = "HUB";
-    } else {
-      // Fallback if hub definition missing
+    startSceneId = "ARRIVAL";
+  } else if (type === "station") {
+    // Use EXTERIOR district view until station hub art is available
     startSceneId = "EXTERIOR";
-    }
   } else if (type === "outpost") {
     // Outposts land into exterior scene, then enter interior for services
     startSceneId = "OUTPOST_EXTERIOR";
@@ -12713,8 +13070,62 @@ function resetPreviewPlaceholder() {
  * navigable without leaving stale CREW/SHIP/INVENTORY DOM in place.
  */
 function renderSettings() {
-  // No-op for now: hideMapSurfaces() + resetPreviewPlaceholder() handle the
-  // visual state. When real settings UI is added, build it here.
+  const viewportContent = document.getElementById("viewport-content");
+  if (!viewportContent) return;
+
+  let settingsContainer = document.getElementById("settings-container");
+  if (!settingsContainer) {
+    settingsContainer = document.createElement("div");
+    settingsContainer.id = "settings-container";
+    settingsContainer.className = "settings-container";
+    viewportContent.appendChild(settingsContainer);
+  }
+
+  settingsContainer.innerHTML = "";
+
+  const heading = document.createElement("h2");
+  heading.className = "settings-heading";
+  heading.textContent = "SETTINGS";
+  settingsContainer.appendChild(heading);
+
+  const gameSection = document.createElement("div");
+  gameSection.className = "settings-section";
+
+  const gameLabel = document.createElement("div");
+  gameLabel.className = "settings-label";
+  gameLabel.textContent = "Game";
+  gameSection.appendChild(gameLabel);
+
+  const newGameBtn = document.createElement("button");
+  newGameBtn.type = "button";
+  newGameBtn.className = "settings-btn";
+  newGameBtn.textContent = "New Game";
+  newGameBtn.addEventListener("click", () => {
+    resetAndStartNewGame();
+  });
+  gameSection.appendChild(newGameBtn);
+  settingsContainer.appendChild(gameSection);
+
+  const devSection = document.createElement("div");
+  devSection.className = "settings-section";
+
+  const devLabel = document.createElement("div");
+  devLabel.className = "settings-label";
+  devLabel.textContent = "Development";
+  devSection.appendChild(devLabel);
+
+  const devSeedToggle = document.createElement("label");
+  devSeedToggle.className = "settings-toggle";
+  const devSeedCheckbox = document.createElement("input");
+  devSeedCheckbox.type = "checkbox";
+  devSeedCheckbox.checked = shouldDevSeedInventory();
+  devSeedCheckbox.addEventListener("change", () => {
+    setDevSeedPreference(devSeedCheckbox.checked);
+  });
+  devSeedToggle.appendChild(devSeedCheckbox);
+  devSeedToggle.appendChild(document.createTextNode("Seed starter inventory on new game"));
+  devSection.appendChild(devSeedToggle);
+  settingsContainer.appendChild(devSection);
 }
 
 /**
@@ -12926,9 +13337,14 @@ function wireUI() {
     console.error('ERROR: No nav buttons found! Check if .nav-btn elements exist in HTML.');
   }
 
+  el.titleNewGame?.addEventListener("click", () => {
+    resetAndStartNewGame();
+  });
+
   // Nav tabs
   el.navButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
+      if (gameState.meta.screen === "TITLE") return;
       const tab = /** @type {Tab} */ (btn.getAttribute("data-tab"));
       setTab(tab);
     });
@@ -12936,6 +13352,7 @@ function wireUI() {
 
   // Actions
   el.actionTravel?.addEventListener("click", (event) => {
+    if (gameState.meta.screen === "TITLE") return;
     // Guard: disable travel when event is active
     if (gameState.travel.isEventActive) return;
     
@@ -13076,10 +13493,6 @@ function wireUI() {
         gameState.travel.currentSceneId = "MAP";
         
         debugLog("[ARRIVE]", selectedId, "scene=MAP");
-        if (selectedId === "mars") {
-          finishRun("WON", "You reached Mars before the mission collapsed.");
-          return;
-        }
         
         // If landing on the broadcast station, advance to next station
         const routeOrder = ["earth", "outpost-0", "station-01", "outpost-1", "station-02", "outpost-2", "station-03", "mars"];
@@ -13156,6 +13569,7 @@ function wireUI() {
   });
 
   el.actionWait?.addEventListener("click", (event) => {
+    if (gameState.meta.screen === "TITLE") return;
     if (gameState.travel.isWaiting) {
       // Stop waiting
       if (gameState.travel.waitIntervalId !== null) {
@@ -13305,6 +13719,7 @@ function wireUI() {
   }
   
   el.actionScan?.addEventListener("click", (e) => {
+    if (gameState.meta.screen === "TITLE") return;
     // Guard: disable scan when event is active
     if (gameState.travel.isEventActive) return;
     
@@ -13810,15 +14225,17 @@ const dispatchAction = createDispatchAction({
   handleAsteroidHunt,
   handleAsteroidApproachStructure,
   handleAsteroidLeave,
+  handleInfoAction,
+  handleShipDock,
+  handleShipHail,
+  handleCompleteMission,
   logFinalizeLandingSummary,
   startAnimationLoop,
 });
 
-// Wait for DOM to be fully loaded before initializing
-function initGame() {
+function bootApp() {
   initDebugFromUrl();
 
-  // Wire scheduler + time module now that all hooks/render are declared.
   setRenderFunction(render);
   _advanceDaysImpl = createAdvanceDays({
     gameState,
@@ -13828,69 +14245,14 @@ function initGame() {
     onAfterAdvance: checkEndConditions,
   });
 
-  // Initialize random outpost image mapping for this playthrough
-  if (!gameState.travel.outpostImageMapping) {
-    gameState.travel.outpostImageMapping = initializeOutpostImageMapping();
-  }
-  
-  // Initialize random asteroid and ship image mappings for this playthrough
-  if (!gameState.travel.asteroidImageMapping) {
-    const asteroidNodes = mapNodes.filter(n => n.type === "asteroid");
-    gameState.travel.asteroidImageMapping = initializeAsteroidImageMapping(asteroidNodes);
-  }
-  
-  if (!gameState.travel.shipImageMapping) {
-    const shipNodes = mapNodes.filter(n => n.type === "ship");
-    gameState.travel.shipImageMapping = initializeShipImageMapping(shipNodes);
-  }
-  
-  // Initialize revealed nodes with the nearest station and outpost
-  initializeRevealedNodes();
-  
-  // Initialize crew members
-  if (!gameState.crew.members || gameState.crew.members.length === 0) {
-    initializeCrew();
-}
-  
-  // Seed dev starting inventory (if enabled)
-  seedDevStartingInventory();
-
-wireUI();
-  
-  // Ensure scene container is hidden on startup (map should be visible)
-  // Force hide using both hidden attribute and display style
-  if (el.sceneContainer) {
-    el.sceneContainer.hidden = true;
-    el.sceneContainer.setAttribute("hidden", "");
-    el.sceneContainer.style.display = "none";
-  }
-  // Clear scene image to prevent it from showing
-  if (el.sceneImage) {
-    el.sceneImage.src = "";
-    el.sceneImage.style.display = "none";
-  }
-  // Clear hotspots
-  if (el.sceneHotspots) {
-    el.sceneHotspots.innerHTML = "";
-  }
-  if (el.canvas) {
-    el.canvas.hidden = false;
-    el.canvas.removeAttribute("hidden");
-    el.canvas.style.display = "block";
-  }
-  
-  // Ensure we start on MAP view
-  gameState.travel.currentSceneId = "MAP";
-  
-render();
-  startAnimationLoop(); // Start continuous animation loop for smooth pulsing
+  wireUI();
+  showTitleScreen();
 }
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    initGame();
+    bootApp();
   });
 } else {
-  // DOM is already loaded
-  initGame();
+  bootApp();
 }
