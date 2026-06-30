@@ -936,13 +936,14 @@ html, body {
 .merchant-content-area {
   width: 100%;
   flex: 1;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
   min-height: 0;
 }
 
 .merchant-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   grid-auto-flow: row;
   gap: 12px;
   padding: 10px;
@@ -950,7 +951,8 @@ html, body {
   align-items: start;
 }
 
-.buy-item-row {
+.buy-item-row,
+.sell-item-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -960,6 +962,48 @@ html, body {
   transition: background 0.1s;
   width: 100%;
   min-width: 0;
+}
+
+.item-capsule {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 2px solid var(--paper);
+  border-radius: 20px;
+  font-family: 'Inter', sans-serif;
+}
+
+.item-capsule .item-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--paper);
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.item-capsule .item-price {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.item-capsule .divider {
+  flex-shrink: 0;
+  width: 2px;
+  height: 20px;
+  background: var(--paper);
+}
+
+.buy-item-row {
+  /* extends .buy-item-row, .sell-item-row */
 }
 
 .buy-item-row:hover {

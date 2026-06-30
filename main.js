@@ -7141,13 +7141,6 @@ function renderGeneralStore(locationId, location) {
     // Create 3-column grid that wraps to new rows
     const gridContainer = document.createElement("div");
     gridContainer.className = "merchant-grid";
-    gridContainer.style.cssText = `
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      grid-auto-flow: row;
-      gap: 12px;
-      padding: 10px;
-    `;
     
     // Render each item as a row
     availableItems.forEach(item => {
@@ -7196,48 +7189,19 @@ function renderGeneralStore(locationId, location) {
       // Item capsule (right)
       const itemCapsule = document.createElement("div");
       itemCapsule.className = "item-capsule";
-      itemCapsule.style.cssText = `
-        flex: 1;
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        padding: 8px 12px;
-        border: 2px solid #ffffff;
-        border-radius: 20px;
-        font-family: 'Inter', sans-serif;
-      `;
       
-      // Item name (left side of capsule)
       const itemName = document.createElement("span");
+      itemName.className = "item-name";
       itemName.textContent = item.name;
-      itemName.style.cssText = `
-        font-weight: 600;
-        font-size: 14px;
-        color: #ffffff;
-        flex: 1;
-      `;
       itemCapsule.appendChild(itemName);
       
-      // Divider
       const divider = document.createElement("div");
       divider.className = "divider";
-      divider.style.cssText = `
-        width: 2px;
-        height: 20px;
-        background: #ffffff;
-      `;
       itemCapsule.appendChild(divider);
       
-      // Price (right side of capsule)
       const priceEl = document.createElement("span");
+      priceEl.className = "item-price";
       priceEl.textContent = `${item.price}c`;
-      priceEl.style.cssText = `
-        font-weight: 700;
-        font-size: 14px;
-        color: #ffffff;
-        min-width: 50px;
-        text-align: right;
-      `;
       itemCapsule.appendChild(priceEl);
       
       row.appendChild(qtyBox);
@@ -7465,14 +7429,6 @@ function renderGeneralStore(locationId, location) {
       // Create 3-column grid for artifacts
       const gridContainer = document.createElement("div");
       gridContainer.className = "merchant-grid";
-      gridContainer.style.cssText = `
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        grid-auto-flow: row;
-        gap: 12px;
-        padding: 10px;
-        width: 100%;
-      `;
       
       // Render each artifact type as a row (grouped by artifactId)
       Object.values(artifactGroups).forEach(group => {
@@ -7527,53 +7483,19 @@ function renderGeneralStore(locationId, location) {
         // Item capsule (right)
         const itemCapsule = document.createElement("div");
         itemCapsule.className = "item-capsule";
-        itemCapsule.style.cssText = `
-          flex: 1;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 8px 12px;
-          border: 1px solid #ffffff;
-          border-radius: 20px;
-          font-family: 'Inter', sans-serif;
-          min-width: 0;
-          overflow: hidden;
-        `;
         
-        // Artifact name (left side of capsule)
         const itemName = document.createElement("span");
+        itemName.className = "item-name";
         itemName.textContent = artifactDef.name;
-        itemName.style.cssText = `
-          font-weight: 500;
-          font-size: 14px;
-          color: #ffffff;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          flex: 1;
-          min-width: 0;
-        `;
         
-        // Divider
         const divider = document.createElement("span");
         divider.className = "divider";
         divider.textContent = "|";
-        divider.style.cssText = `
-          margin: 0 8px;
-          color: #ffffff;
-          flex-shrink: 0;
-        `;
+        divider.style.cssText = "width: auto; height: auto; background: none; margin: 0 8px; color: var(--paper); flex-shrink: 0;";
         
-        // Price (right side of capsule)
         const priceEl = document.createElement("span");
+        priceEl.className = "item-price";
         priceEl.textContent = `${sellPrice}c`;
-        priceEl.style.cssText = `
-          font-weight: 700;
-          font-size: 14px;
-          color: #ffffff;
-          white-space: nowrap;
-          flex-shrink: 0;
-        `;
         
         itemCapsule.appendChild(itemName);
         itemCapsule.appendChild(divider);
@@ -9600,14 +9522,6 @@ function renderTraderMerchant(asteroidId) {
   // Create 3-column grid that wraps to new rows
   const gridContainer = document.createElement("div");
   gridContainer.className = "merchant-grid";
-  gridContainer.style.cssText = `
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    grid-auto-flow: row;
-    gap: 12px;
-    padding: 10px;
-    width: 100%;
-  `;
   
   // Render each item as a row
   traderItems.forEach(item => {
@@ -9657,50 +9571,19 @@ function renderTraderMerchant(asteroidId) {
     // Item capsule (right)
     const capsule = document.createElement("div");
     capsule.className = "item-capsule";
-    capsule.style.cssText = `
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 8px 12px;
-      border: 1px solid #ffffff;
-      border-radius: 20px;
-      font-family: 'Inter', sans-serif;
-      min-width: 0;
-      overflow: hidden;
-    `;
     
     const itemName = document.createElement("span");
+    itemName.className = "item-name";
     itemName.textContent = item.name;
-    itemName.style.cssText = `
-      font-weight: 500;
-      font-size: 14px;
-      color: #ffffff;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
-      min-width: 0;
-    `;
     
     const divider = document.createElement("span");
     divider.className = "divider";
     divider.textContent = "|";
-    divider.style.cssText = `
-      margin: 0 8px;
-      color: #ffffff;
-      flex-shrink: 0;
-    `;
+    divider.style.cssText = "width: auto; height: auto; background: none; margin: 0 8px; color: var(--paper); flex-shrink: 0;";
     
     const price = document.createElement("span");
+    price.className = "item-price";
     price.textContent = `${item.price}c`;
-    price.style.cssText = `
-      font-weight: 700;
-      font-size: 14px;
-      color: #ffffff;
-      white-space: nowrap;
-      flex-shrink: 0;
-    `;
     
     const remainingEl = document.createElement("span");
     const selectedText = String(qty).padStart(2, "0");
