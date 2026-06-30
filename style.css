@@ -1002,10 +1002,6 @@ html, body {
   background: var(--paper);
 }
 
-.buy-item-row {
-  /* extends .buy-item-row, .sell-item-row */
-}
-
 .buy-item-row:hover {
   background: rgba(255, 255, 255, 0.1);
 }
@@ -1160,9 +1156,13 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
   text-align: center;
   padding: 48px;
+}
+
+.title-screen-inner .title-screen-btn + .title-screen-btn {
+  margin-top: 4px;
 }
 
 .title-screen-heading {

@@ -45,6 +45,12 @@ import {
 } from "./js/assets/manifest.js";
 import { createInitialState } from "./js/state/initialState.js";
 import {
+  saveRunToStorage,
+  loadRunFromStorage,
+  clearRunSave,
+  hasSavedRun,
+} from "./js/saveGame.js";
+import {
   calculateOrbitalAngle,
   getBaseOrbitalPeriod,
   generateRandomOrbitalPeriod,
@@ -3119,6 +3125,7 @@ const el = {
 
   // Title screen
   titleScreen: /** @type {HTMLElement|null} */ (document.getElementById("title-screen")),
+  titleContinue: /** @type {HTMLButtonElement|null} */ (document.getElementById("title-continue")),
   titleNewGame: /** @type {HTMLButtonElement|null} */ (document.getElementById("title-new-game")),
   app: /** @type {HTMLElement|null} */ (document.getElementById("app")),
 };
@@ -3304,6 +3311,76 @@ function showTitleScreen() {
   if (el.app) {
     el.app.classList.add("is-title-hidden");
   }
+  updateTitleScreenButtons();
+}
+
+function updateTitleScreenButtons() {
+  if (!el.titleContinue) return;
+  if (hasSavedRun()) {
+    el.titleContinue.hidden = false;
+    el.titleContinue.removeAttribute("hidden");
+  } else {
+    el.titleContinue.hidden = true;
+    el.titleContinue.setAttribute("hidden", "");
+  }
+}
+
+function persistCurrentRun() {
+  return saveRunToStorage(gameState, routeStructure, mapNodes);
+}
+
+function applySavedRun(saved) {
+  routeStructure = saved.routeStructure;
+  cumulativeTravelTimes = routeCumulativeTravelTimes(routeStructure.segments);
+  mapNodes = saved.mapNodes;
+
+  const savedState = saved.gameState;
+  gameState.meta = savedState.meta;
+  gameState.stats = savedState.stats;
+  gameState.travel = savedState.travel;
+  gameState.crew = savedState.crew;
+  gameState.inventory = savedState.inventory;
+  gameState.log = savedState.log;
+  gameState.ship = savedState.ship;
+  gameState.meta.screen = "PLAYING";
+
+  syncHullIntegrity(gameState);
+}
+
+function continueSavedRun() {
+  const saved = loadRunFromStorage();
+  if (!saved) {
+    updateTitleScreenButtons();
+    return false;
+  }
+
+  stopContinuousActions();
+  endEvent();
+  closeAllOverlays();
+  applySavedRun(saved);
+  hideTitleScreen();
+  render();
+  startAnimationLoop();
+  return true;
+}
+
+function refreshPageKeepingRun() {
+  if (gameState.meta.screen === "PLAYING") {
+    persistCurrentRun();
+  }
+  window.location.reload();
+}
+
+let saveRunTimer = null;
+function scheduleRunSave() {
+  if (gameState.meta.screen !== "PLAYING") return;
+  if (saveRunTimer !== null) {
+    clearTimeout(saveRunTimer);
+  }
+  saveRunTimer = setTimeout(() => {
+    saveRunTimer = null;
+    persistCurrentRun();
+  }, 400);
 }
 
 function hideTitleScreen() {
@@ -3342,6 +3419,7 @@ function resetAndStartNewGame() {
   stopContinuousActions();
   endEvent();
   closeAllOverlays();
+  clearRunSave();
 
   rebuildWorld();
   resetGameStateData();
@@ -3381,6 +3459,7 @@ function resetAndStartNewGame() {
   gameState.travel.currentSceneId = "MAP";
   gameState.meta.tab = "TRAVEL";
   render();
+  persistCurrentRun();
   startIntroBriefing();
 }
 
@@ -12987,6 +13066,21 @@ function renderSettings() {
     resetAndStartNewGame();
   });
   gameSection.appendChild(newGameBtn);
+
+  const refreshBtn = document.createElement("button");
+  refreshBtn.type = "button";
+  refreshBtn.className = "settings-btn";
+  refreshBtn.textContent = "Refresh Page";
+  refreshBtn.addEventListener("click", () => {
+    refreshPageKeepingRun();
+  });
+  gameSection.appendChild(refreshBtn);
+
+  const saveNote = document.createElement("div");
+  saveNote.className = "settings-label";
+  saveNote.style.opacity = "0.75";
+  saveNote.textContent = "Progress saves automatically. Refresh reloads the page and restores your run.";
+  gameSection.appendChild(saveNote);
   settingsContainer.appendChild(gameSection);
 
   const devSection = document.createElement("div");
@@ -13031,6 +13125,7 @@ function render() {
   updateTravelButton();
 
   syncHullIntegrity(gameState);
+  scheduleRunSave();
 
   const tab = gameState.meta.tab;
   const tabRenderer = NON_TRAVEL_TAB_RENDERERS[tab];
@@ -13222,6 +13317,10 @@ function wireUI() {
 
   el.titleNewGame?.addEventListener("click", () => {
     resetAndStartNewGame();
+  });
+
+  el.titleContinue?.addEventListener("click", () => {
+    continueSavedRun();
   });
 
   // Nav tabs
@@ -14129,7 +14228,22 @@ function bootApp() {
   });
 
   wireUI();
-  showTitleScreen();
+
+  window.addEventListener("beforeunload", () => {
+    if (gameState.meta.screen === "PLAYING") {
+      persistCurrentRun();
+    }
+  });
+
+  const saved = loadRunFromStorage();
+  if (saved) {
+    applySavedRun(saved);
+    hideTitleScreen();
+    render();
+    startAnimationLoop();
+  } else {
+    showTitleScreen();
+  }
 }
 
 if (document.readyState === 'loading') {
