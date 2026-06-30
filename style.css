@@ -936,13 +936,14 @@ html, body {
 .merchant-content-area {
   width: 100%;
   flex: 1;
-  overflow: visible;
+  overflow-x: hidden;
+  overflow-y: auto;
   min-height: 0;
 }
 
 .merchant-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   grid-auto-flow: row;
   gap: 12px;
   padding: 10px;
@@ -950,7 +951,8 @@ html, body {
   align-items: start;
 }
 
-.buy-item-row {
+.buy-item-row,
+.sell-item-row {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -960,6 +962,44 @@ html, body {
   transition: background 0.1s;
   width: 100%;
   min-width: 0;
+}
+
+.item-capsule {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 2px solid var(--paper);
+  border-radius: 20px;
+  font-family: 'Inter', sans-serif;
+}
+
+.item-capsule .item-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--paper);
+  white-space: normal;
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.item-capsule .item-price {
+  flex-shrink: 0;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--paper);
+  white-space: nowrap;
+}
+
+.item-capsule .divider {
+  flex-shrink: 0;
+  width: 2px;
+  height: 20px;
+  background: var(--paper);
 }
 
 .buy-item-row:hover {
@@ -1092,4 +1132,152 @@ html, body {
   font-size: 24px;
   color: var(--paper);
   opacity: 0.5;
+}
+
+/* =============================
+   TITLE SCREEN
+   ============================= */
+
+#title-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, #1a0508 0%, #050505 70%);
+}
+
+#title-screen[hidden] {
+  display: none !important;
+}
+
+.title-screen-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  padding: 48px;
+}
+
+.title-screen-inner .title-screen-btn + .title-screen-btn {
+  margin-top: 4px;
+}
+
+.title-screen-heading {
+  margin: 0;
+  font-size: 48px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  color: var(--paper);
+  text-transform: uppercase;
+}
+
+.title-screen-tagline {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  max-width: 420px;
+  line-height: 1.5;
+}
+
+.title-screen-btn {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 16px;
+  padding: 14px 48px;
+  border: 2px solid var(--paper);
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--paper);
+  transition: background 0.15s, color 0.15s;
+}
+
+.title-screen-btn.is-primary {
+  background: var(--mars-red);
+  border-color: var(--mars-red);
+  color: var(--paper);
+}
+
+.title-screen-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.title-screen-btn.is-primary:hover {
+  background: #a01025;
+  border-color: #a01025;
+  color: var(--paper);
+}
+
+#app.is-title-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Settings panel */
+.settings-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 32px;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.settings-heading {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--paper);
+  margin: 0;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.settings-btn {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  padding: 12px 24px;
+  border: 2px solid var(--paper);
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: var(--paper);
+  align-self: flex-start;
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-btn:hover {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--paper);
+  cursor: pointer;
+}
+
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
 }

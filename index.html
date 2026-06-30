@@ -10,7 +10,16 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <div id="app">
+  <div id="title-screen" aria-label="Title Screen">
+    <div class="title-screen-inner">
+      <h1 class="title-screen-heading">Red Planet Rush</h1>
+      <p class="title-screen-tagline">Reach Mars before the window closes.</p>
+      <button type="button" id="title-continue" class="title-screen-btn" hidden>CONTINUE</button>
+      <button type="button" id="title-new-game" class="title-screen-btn is-primary">NEW GAME</button>
+    </div>
+  </div>
+
+  <div id="app" class="is-title-hidden">
     <!-- Left side: changing viewport (TRAVEL / SHIP / CREW / LOG) -->
     <main id="viewport" aria-label="Viewport">
       <!-- Canvas lives here for TRAVEL mode; other modes render DOM panels -->

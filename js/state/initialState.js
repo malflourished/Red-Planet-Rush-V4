@@ -70,6 +70,7 @@
 export function createInitialState() {
   return {
     meta: {
+      screen: "TITLE", // TITLE | PLAYING
       tab: "TRAVEL",
       travelView: "MAP", // Legacy alias for currentSceneId; do not write to.
       devSeedApplied: false,

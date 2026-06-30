@@ -18,6 +18,10 @@ export function createDispatchAction(deps) {
     handleAsteroidHunt,
     handleAsteroidApproachStructure,
     handleAsteroidLeave,
+    handleInfoAction,
+    handleShipDock,
+    handleShipHail,
+    handleCompleteMission,
     logFinalizeLandingSummary,
     startAnimationLoop,
   } = deps;
@@ -88,7 +92,7 @@ export function createDispatchAction(deps) {
 
       case "ENTER_SERVICE":
         if (action.to) {
-          gameState.travel.returnSceneId = "HUB";
+          gameState.travel.returnSceneId = "EXTERIOR";
           gameState.travel.currentSceneId = action.to;
           render();
         }
@@ -167,7 +171,19 @@ export function createDispatchAction(deps) {
         break;
 
       case "INFO":
-        debugLog(`[Info Action] ${action.type} clicked`);
+        handleInfoAction(action);
+        break;
+
+      case "COMPLETE_MISSION":
+        handleCompleteMission();
+        break;
+
+      case "SHIP_DOCK":
+        handleShipDock(locationId);
+        break;
+
+      case "SHIP_HAIL":
+        handleShipHail(locationId);
         break;
 
       case "OUTPOST_EXPLORE":
@@ -175,7 +191,7 @@ export function createDispatchAction(deps) {
         break;
 
       case "OPEN_DOCKYARD":
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
+        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
         gameState.travel.serviceOverlay = "dockyard";
         gameState.travel.dockyardMode = "repair";
         gameState.travel.dockyardSelectionId = null;
@@ -183,7 +199,7 @@ export function createDispatchAction(deps) {
         break;
 
       case "OPEN_CLINIC":
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
+        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
         gameState.travel.serviceOverlay = "clinic";
         gameState.travel.clinicMode = "treat";
         gameState.travel.clinicSelectedMemberId = null;
@@ -192,14 +208,18 @@ export function createDispatchAction(deps) {
         break;
 
       case "OPEN_CANTINA":
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
+        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
         gameState.travel.serviceOverlay = "cantina";
-        gameState.travel.cantinaUI = { tab: "order", selectedOrderId: null, activeRumor: null };
+        gameState.travel.cantinaUI = {
+          tab: action.tab || "order",
+          selectedOrderId: null,
+          activeRumor: null,
+        };
         render();
         break;
 
       case "OPEN_ADMIN":
-        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "HUB";
+        gameState.travel.returnSceneId = gameState.travel.currentSceneId || "EXTERIOR";
         gameState.travel.serviceOverlay = "admin";
         render();
         break;
